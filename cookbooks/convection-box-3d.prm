@@ -9,7 +9,7 @@ set Dimension                              = 3
 # also designate an output directory.
 set Use years in output instead of seconds = false
 set End time                               = 1.0
-set Output directory                       = output
+set Output directory                       = output-convection-box-3d
 
 # Then there are variables that describe the tolerance of
 # the linear solver as well as how the pressure should
@@ -52,7 +52,7 @@ end
 # constants. We choose a linear temperature profile that
 # matches the boundary conditions defined below plus
 # a small perturbation:
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = function
 
   subsection Function
@@ -71,7 +71,7 @@ end
 # in the next section, the actual temperature prescribed here
 # at the left and right does not matter.)
 subsection Boundary temperature model
-  set Model name = box
+  set List of model names = box
 
   subsection Box
     set Bottom temperature = 1
@@ -103,8 +103,6 @@ subsection Model settings
   # compressibility of the medium) or from shear friction,
   # as well as the rate of internal heating. We do not
   # want to use any of these options here:
-  set Include adiabatic heating               = false
-  set Include shear heating                   = false
 end
 
 

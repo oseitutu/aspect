@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,14 +14,14 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 
-#ifndef __aspect__prescribed_stokes_solution_interface_h
-#define __aspect__prescribed_stokes_solution_interface_h
+#ifndef _aspect_prescribed_stokes_solution_interface_h
+#define _aspect_prescribed_stokes_solution_interface_h
 
 #include <aspect/plugins.h>
 
@@ -69,6 +69,20 @@ namespace aspect
         virtual
         void
         initialize ();
+
+        /**
+         * A function that is called at the beginning of each time step. The
+         * default implementation of the function does nothing, but derived
+         * classes that need more elaborate setups for a given time step may
+         * overload the function.
+         *
+         * The point of this function is to allow complex prescribed Stokes
+         * solutions to do an initialization step once at the beginning of each
+         * time step. An example would be a time-dependent prescribed velocity.
+         */
+        virtual
+        void
+        update ();
 
         /**
          * Given a position @p p, fill in desired velocity and pressure at
@@ -151,6 +165,20 @@ namespace aspect
     template <int dim>
     void
     declare_parameters (ParameterHandler &prm);
+
+
+    /**
+     * For the current plugin subsystem, write a connection graph of all of the
+     * plugins we know about, in the format that the
+     * programs dot and neato understand. This allows for a visualization of
+     * how all of the plugins that ASPECT knows about are interconnected, and
+     * connect to other parts of the ASPECT code.
+     *
+     * @param output_stream The stream to write the output to.
+     */
+    template <int dim>
+    void
+    write_plugin_graph (std::ostream &output_stream);
 
 
 

@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,15 +14,17 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
+#include <aspect/mesh_refinement/slope.h>
+#include <aspect/gravity_model/interface.h>
+
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/fe/fe_values.h>
 
-#include <aspect/mesh_refinement/slope.h>
 
 namespace aspect
 {
@@ -52,23 +54,20 @@ namespace aspect
             if (cell->face(face_no)->at_boundary())
               {
                 const types::boundary_id boundary_indicator
-#if DEAL_II_VERSION_GTE(8,3,0)
                   = cell->face(face_no)->boundary_id();
-#else
-                  = cell->face(face_no)->boundary_indicator();
-#endif
+
                 if ( this->get_free_surface_boundary_indicators().find(boundary_indicator) !=
                      this->get_free_surface_boundary_indicators().end() )
                   {
                     fe_face_values.reinit(cell, face_no);
 
-                    const Tensor<1,dim> normal( fe_face_values.normal_vector(0) ); //Only one q point
+                    const Tensor<1,dim> normal( fe_face_values.normal_vector(0) ); // Only one q point
                     const Point<dim> midpoint = fe_face_values.quadrature_point(0);
                     const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(midpoint);
 
-                    indicators(i) = std::acos( std::abs ( normal * gravity / gravity.norm() ) ) //Don't care whether gravity is in the opposite direction
-                                    * std::pow( cell->diameter(), double(dim-1)); //scale with approximate surface area of the cell
-                    break;  //no need to loop over the rest of the faces
+                    indicators(i) = std::acos( std::abs ( normal * gravity / gravity.norm() ) ) // Don't care whether gravity is in the opposite direction
+                                    * std::pow( cell->diameter(), double(dim-1)); // scale with approximate surface area of the cell
+                    break;  // no need to loop over the rest of the faces
                   }
               }
 
@@ -90,7 +89,7 @@ namespace aspect
                                               "\n\n"
                                               "To use this refinement criterion, you may want to combine "
                                               "it with other refinement criteria, setting the 'Normalize "
-                                              "individual refinement criteria' flag and using the 'max' "
+                                              "individual refinement criteria' flag and using the `max' "
                                               "setting for 'Refinement criteria merge operation'.")
   }
 }

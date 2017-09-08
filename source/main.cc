@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,16 +14,20 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/simulator.h>
+#include <aspect/utilities.h>
 
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/mpi.h>
 #include <deal.II/base/multithread_info.h>
+#include <deal.II/base/revision.h>
+#include <csignal>
+#include <string>
 
 #ifdef DEBUG
 #ifdef ASPECT_USE_FP_EXCEPTIONS
@@ -83,6 +87,11 @@ get_last_value_of_parameter(const std::string &parameters,
       // we'd expect an equals size here
       if ((line.size() < 1) || (line[0] != '='))
         continue;
+
+      // remove comment
+      std::string::size_type pos = line.find('#');
+      if (pos != std::string::npos)
+        line.erase (pos);
 
       // trim the equals sign at the beginning and possibly following spaces
       // as well as spaces at the end
@@ -264,56 +273,21 @@ void possibly_load_shared_libs (const std::string &parameters)
     }
 }
 
-
-/**
- *  Look up break line sign (\\) at the end of a line and merge this line with the next one.
- *  Return the result as a string in which all lines of the input file are
- *  separated by \n characters, unless the corresponding lines ended
- *  in backslashes.
+/*
+ * Current implementation for reading from stdin requires use of a std::string,
+ * so this function will read until the end of the stream
  */
 std::string
-expand_backslashes (std::istream &input)
+read_until_end (std::istream &input)
 {
   std::string result;
-
-  unsigned int need_empty_lines = 0;
-
   while (input)
     {
-      // get one line and strip spaces at the back
       std::string line;
       std::getline(input, line);
-      while ((line.size() > 0)
-             && (line[line.size() - 1] == ' ' || line[line.size() - 1] == '\t'))
-        line.erase(line.size() - 1, std::string::npos);
 
-      // if the line ends in a backslash, add it without the backslash to
-      // the buffer and increase the counter for the number of lines we have
-      // just concatenated
-      if ((line.size() > 0) && (line[line.size()-1] == '\\'))
-        {
-          result += line.substr(0, line.size()-1);
-          ++need_empty_lines;
-        }
-      else
-        // if it doesn't end in a newline, concatenate the current line
-        // with what we have in the buffer and add the \n character
-        {
-          result += line;
-          result += '\n';
-
-          // if we have just added a line (not ending in a backslash)
-          // to something that was obtained by addressing backslashes,
-          // then add some empty lines to make sure that the line
-          // counter is still correct at least for all lines that don't
-          // end in a backslash (so that we can ensure that errors
-          // message propagating out of ParameterHandler)
-          for (; need_empty_lines>0; --need_empty_lines)
-            result += '\n';
-        }
+      result += line + '\n';
     }
-
-  // finally return whatever we have in the buffer
   return result;
 }
 
@@ -339,7 +313,17 @@ parse_parameters (const std::string &input_as_string,
   // try reading on processor 0
   bool success = true;
   if (dealii::Utilities::MPI::this_mpi_process (MPI_COMM_WORLD) == 0)
-    success = prm.read_input_from_string(input_as_string.c_str());
+    try
+      {
+        prm.parse_input_from_string(input_as_string.c_str());
+      }
+    catch (const dealii::ExceptionBase &e)
+      {
+        success = false;
+        e.print_info(std::cerr);
+        std::cerr << std::endl;
+      }
+
 
   // broadcast the result. we'd like to do this with a bool
   // data type but MPI_C_BOOL is not part of old MPI standards.
@@ -366,11 +350,92 @@ parse_parameters (const std::string &input_as_string,
   // other processors will be ok as well
   if (dealii::Utilities::MPI::this_mpi_process (MPI_COMM_WORLD) != 0)
     {
-      success = prm.read_input_from_string(input_as_string.c_str());
-      AssertThrow(success, dealii::ExcMessage ("Invalid input parameter file."));
+      prm.parse_input_from_string(input_as_string.c_str());
     }
 }
 
+
+
+/**
+ * Print help text
+ */
+void print_help()
+{
+  std::cout << "Usage: ./aspect [args] <parameter_file.prm>   (to read from an input file)"
+            << std::endl
+            << "    or ./aspect [args] --                     (to read parameters from stdin)"
+            << std::endl
+            << std::endl;
+  std::cout << "    optional arguments [args]:"
+            << std::endl
+            << "       --version              (for information about library versions)"
+            << std::endl
+            << "       --help                 (for this usage help)"
+            << std::endl
+            << "       --output-xml           (print parameters in xml format to standard output and exit)"
+            << std::endl
+            << "       --output-plugin-graph  (write a representation of all plugins to standard output and exit)"
+            << std::endl
+            << std::endl;
+}
+
+
+/**
+ * Print information about the versions of underlying libraries.
+ */
+template <class Stream>
+void print_version_information(Stream &stream)
+{
+  stream << "Version information of underlying libraries:\n"
+         << "   . deal.II:    "
+         << DEAL_II_PACKAGE_VERSION           << '\t'
+         << "   (git revision "
+         << DEAL_II_GIT_SHORTREV              << ")\n"
+#ifndef ASPECT_USE_PETSC
+         << "   . Trilinos:   "
+         << DEAL_II_TRILINOS_VERSION_MAJOR    << '.'
+         << DEAL_II_TRILINOS_VERSION_MINOR    << '.'
+         << DEAL_II_TRILINOS_VERSION_SUBMINOR << '\n'
+#else
+         << "   . PETSc:      "
+         << PETSC_VERSION_MAJOR    << '.'
+         << PETSC_VERSION_MINOR    << '.'
+         << PETSC_VERSION_SUBMINOR << '\n'
+#endif
+         << "   . p4est:      "
+         << DEAL_II_P4EST_VERSION_MAJOR << '.'
+         << DEAL_II_P4EST_VERSION_MINOR << '.'
+         << DEAL_II_P4EST_VERSION_SUBMINOR << '\n'
+         << std::endl;
+}
+
+
+// hook into SIGABRT/SIGFPE and kill off the program
+void signal_handler(int signal)
+{
+  if (signal == SIGABRT)
+    {
+      std::cerr << "SIGABRT received\n";
+    }
+  else if (signal == SIGFPE)
+    {
+      std::cerr << "SIGFPE received\n";
+    }
+  else
+    {
+      std::cerr << "Unexpected signal " << signal << " received\n";
+    }
+#if DEAL_II_USE_CXX11
+  // Kill the program without performing any other cleanup, which is likely to
+  // lead to a deadlock
+  std::_Exit(EXIT_FAILURE);
+#else
+  // Kill the program, or at least try to. The problem when we get here is
+  // that calling std::exit invokes at_exit() functions that may still hang
+  // the MPI system
+  std::exit(1);
+#endif
+}
 
 int main (int argc, char *argv[])
 {
@@ -383,6 +448,10 @@ int main (int argc, char *argv[])
 
 #ifdef DEBUG
 #ifdef ASPECT_USE_FP_EXCEPTIONS
+  // Some implementations seem to not initialize the floating point exception
+  // bits to zero. Make sure we start from a clean state.
+  feclearexcept(FE_DIVBYZERO|FE_INVALID);
+
   // enable floating point exceptions
   feenableexcept(FE_DIVBYZERO|FE_INVALID);
 #endif
@@ -391,43 +460,124 @@ int main (int argc, char *argv[])
   try
     {
       deallog.depth_console(0);
-      if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-        print_aspect_header(std::cout);
 
-      if (argc < 2)
+      int current_idx = 1;
+      const bool i_am_proc_0 = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
+
+      std::string prm_name = "";
+      bool output_xml          = false;
+      bool output_plugin_graph = false;
+
+      // We hook into the abort handler on ranks != 0 to avoid an MPI
+      // deadlock. The deal.II library will call std::abort() when an
+      // Assert is triggered, which can lead to a deadlock because it
+      // runs the things that are associated with atexit() which may
+      // itself trigger MPI communication. The same happens for other
+      // signals we may trigger, such as floating point exceptions
+      // (SIGFPE).
+      //
+      // We work around this by immediately calling _Exit in the
+      // signal handler and thus aborting the program without running
+      // cleanup functions set via atexit(). This is only necessary on
+      // rank != 0 for some reason.
+      if (!i_am_proc_0)
         {
-          // print usage info only on processor 0
-          if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+          std::signal(SIGABRT, signal_handler);
+          std::signal(SIGFPE, signal_handler);
+        }
+
+      // Loop over all command line arguments. Handle a number of special ones
+      // starting with a dash, and then take the first non-special one as the
+      // name of the input file. We will later check that there are no further
+      // arguments left after that (though there may be with PETSc, see
+      // below).
+      while (current_idx<argc)
+        {
+          const std::string arg = argv[current_idx];
+          ++current_idx;
+          if (arg == "--output-xml")
             {
-              std::cout << "Usage: ./aspect <parameter_file.prm>   (to read from an input file)"
-                        << std::endl
-                        << "    or ./aspect --                     (to read from stdin)"
-                        << std::endl
-                        << std::endl;
+              output_xml = true;
+            }
+          else if (arg == "--output-plugin-graph")
+            {
+              output_plugin_graph = true;
+            }
+          else if (arg=="-h" || arg =="--help")
+            {
+              if (i_am_proc_0)
+                {
+                  print_aspect_header(std::cout);
+                  print_help();
+                }
+              return 0;
+            }
+          else if (arg=="-v" || arg =="--version")
+            {
+              if (i_am_proc_0)
+                {
+                  print_aspect_header(std::cout);
+                  print_version_information(std::cout);
+                }
+              return 0;
+            }
+          else
+            {
+              // Not a special argument, so we assume that this is the .prm
+              // filename (or "--"). We can now break out of this loop because
+              // we are not going to pass arguments passed after the filename
+              prm_name = arg;
+              break;
+            }
+        }
+
+
+      // if no parameter given or somebody gave additional parameters,
+      // show help and exit.
+      // However, this does not work with PETSc because for PETSc, one
+      // may pass any number of flags on the command line; unfortunately,
+      // the PETSc initialization code (run through the call to
+      // MPI_InitFinalize above) does not filter these out.
+      if ((prm_name == "")
+#ifndef ASPECT_USE_PETSC
+          || (current_idx < argc)
+#endif
+         )
+        {
+          if (i_am_proc_0)
+            {
+              print_aspect_header(std::cout);
+              print_help();
             }
           return 2;
         }
 
-      // see where to read input from, then do the reading and
-      // put the contents of the input into a string
+      // Print header
+      if (i_am_proc_0 && !output_xml && !output_plugin_graph)
+        {
+          print_aspect_header(std::cout);
+        }
+
+
+      // See where to read input from, then do the reading and
+      // put the contents of the input into a string.
       //
-      // as stated above, treat "--" as special: as is common
-      // on unix, treat it as a way to read input from stdin
-      std::string parameter_filename = argv[1];
+      // As stated above, treat "--" as special: as is common
+      // on unix, treat it as a way to read input from stdin.
       std::string input_as_string;
 
-      if (parameter_filename != "--")
+      if (prm_name != "--")
         {
-          std::ifstream parameter_file(parameter_filename.c_str());
+          std::ifstream parameter_file(prm_name.c_str());
           if (!parameter_file)
             {
-              if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+              if (i_am_proc_0)
                 AssertThrow(false, ExcMessage (std::string("Input parameter file <")
-                                               + parameter_filename + "> not found."));
+                                               + prm_name + "> not found."));
               return 3;
             }
 
-          input_as_string = expand_backslashes (parameter_file);
+          input_as_string = read_until_end (parameter_file);
         }
       else
         {
@@ -435,9 +585,9 @@ int main (int argc, char *argv[])
           //    echo "abc" | mpirun -np 4 ./aspect
           // then only MPI process 0 gets the data. so we have to
           // read it there, then broadcast it to the other processors
-          if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+          if (i_am_proc_0)
             {
-              input_as_string = expand_backslashes (std::cin);
+              input_as_string = read_until_end (std::cin);
               int size = input_as_string.size()+1;
               MPI_Bcast (&size,
                          1,
@@ -468,6 +618,10 @@ int main (int argc, char *argv[])
             }
         }
 
+      // Replace $ASPECT_SOURCE_DIR in the input so that include statements
+      // like "include $ASPECT_SOURCE_DIR/tests/bla.prm" work.
+      input_as_string = aspect::Utilities::expand_ASPECT_SOURCE_DIR(input_as_string);
+
 
       // try to determine the dimension we want to work in. the default
       // is 2, but if we find a line of the kind "set Dimension = ..."
@@ -495,9 +649,22 @@ int main (int argc, char *argv[])
             aspect::Simulator<2>::declare_parameters(prm);
             parse_parameters (input_as_string, prm);
 
-            aspect::Simulator<2> flow_problem(MPI_COMM_WORLD, prm);
-            flow_problem.run();
-
+            if (output_xml)
+              {
+                if (i_am_proc_0)
+                  prm.print_parameters(std::cout, ParameterHandler::XML);
+              }
+            else if (output_plugin_graph)
+              {
+                aspect::Simulator<2> flow_problem(MPI_COMM_WORLD, prm);
+                if (i_am_proc_0)
+                  flow_problem.write_plugin_graph (std::cout);
+              }
+            else
+              {
+                aspect::Simulator<2> flow_problem(MPI_COMM_WORLD, prm);
+                flow_problem.run();
+              }
             break;
           }
 
@@ -506,8 +673,22 @@ int main (int argc, char *argv[])
             aspect::Simulator<3>::declare_parameters(prm);
             parse_parameters (input_as_string, prm);
 
-            aspect::Simulator<3> flow_problem(MPI_COMM_WORLD, prm);
-            flow_problem.run();
+            if (output_xml)
+              {
+                if (i_am_proc_0)
+                  prm.print_parameters(std::cout, ParameterHandler::XML);
+              }
+            else if (output_plugin_graph)
+              {
+                aspect::Simulator<3> flow_problem(MPI_COMM_WORLD, prm);
+                if (i_am_proc_0)
+                  flow_problem.write_plugin_graph (std::cout);
+              }
+            else
+              {
+                aspect::Simulator<3> flow_problem(MPI_COMM_WORLD, prm);
+                flow_problem.run();
+              }
 
             break;
           }
@@ -518,12 +699,30 @@ int main (int argc, char *argv[])
                                     "different space dimension is given in the parameter file."));
         }
     }
+  catch (ExceptionBase &exc)
+    {
+      // report name of the deal.II exception:
+      std::cerr << std::endl << std::endl
+                << "----------------------------------------------------"
+                << std::endl;
+      std::cerr << "Exception '" << exc.get_exc_name() << "'"
+                << " on rank " << Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)
+                << " on processing: " << std::endl
+                << exc.what() << std::endl
+                << "Aborting!" << std::endl
+                << "----------------------------------------------------"
+                << std::endl;
+
+      return 1;
+    }
   catch (std::exception &exc)
     {
       std::cerr << std::endl << std::endl
                 << "----------------------------------------------------"
                 << std::endl;
-      std::cerr << "Exception on processing: " << std::endl
+      std::cerr << "Exception"
+                << " on rank " << Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)
+                << " on processing: " << std::endl
                 << exc.what() << std::endl
                 << "Aborting!" << std::endl
                 << "----------------------------------------------------"

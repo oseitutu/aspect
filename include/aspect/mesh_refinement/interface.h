@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011, 2012 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,13 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__mesh_refinement_interface_h
-#define __aspect__mesh_refinement_interface_h
+#ifndef _aspect_mesh_refinement_interface_h
+#define _aspect_mesh_refinement_interface_h
 
 #include <aspect/global.h>
 #include <aspect/plugins.h>
@@ -87,6 +87,19 @@ namespace aspect
          * the SimulatorAccess (if applicable) is initialized.
          */
         virtual void initialize ();
+
+        /**
+         * A function that is called once at the beginning of each timestep.
+         * The default implementation of the function does nothing, but
+         * derived classes that need more elaborate setups for a given time
+         * step may overload the function.
+         *
+         * The point of this function is to allow refinement plugins to do an
+         * initialization once during each time step.
+         */
+        virtual
+        void
+        update ();
 
         /**
          * Execute this mesh refinement criterion. The default implementation
@@ -164,6 +177,16 @@ namespace aspect
          */
         virtual ~Manager ();
 
+        /*
+         * Update all of the mesh refinement objects that have been requested
+         * in the input file. Individual mesh refinement objects may choose to
+         * implement an update function to modify object variables once per
+         * time step.
+         */
+        virtual
+        void
+        update ();
+
         /**
          * Execute all of the mesh refinement objects that have been requested
          * in the input file. The error indicators are then each individually
@@ -222,6 +245,19 @@ namespace aspect
                                             const std::string &description,
                                             void (*declare_parameters_function) (ParameterHandler &),
                                             Interface<dim> *(*factory_function) ());
+
+        /**
+         * For the current plugin subsystem, write a connection graph of all of the
+         * plugins we know about, in the format that the
+         * programs dot and neato understand. This allows for a visualization of
+         * how all of the plugins that ASPECT knows about are interconnected, and
+         * connect to other parts of the ASPECT code.
+         *
+         * @param output_stream The stream to write the output to.
+         */
+        static
+        void
+        write_plugin_graph (std::ostream &output_stream);
 
         /**
          * Exception.

@@ -1,4 +1,4 @@
-# Copyright (C) 2013, 2014 by the authors of the ASPECT code.
+# Copyright (C) 2013 - 2015 by the authors of the ASPECT code.
 #
 # This file is part of ASPECT.
 #
@@ -13,7 +13,7 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with ASPECT; see the file doc/COPYING.  If not see
+# along with ASPECT; see the file LICENSE.  If not see
 # <http://www.gnu.org/licenses/>.
 
 
@@ -28,6 +28,7 @@ _detailed(
 "###
 #
 #  ASPECT configuration:
+#        ASPECT_VERSION:            ${ASPECT_PACKAGE_VERSION}
 #        DEAL_II_DIR:               ${deal.II_DIR}
 #        DEAL_II VERSION:           ${DEAL_II_PACKAGE_VERSION}
 #        ASPECT_USE_PETSC:          ${ASPECT_USE_PETSC}
@@ -44,19 +45,19 @@ _detailed(
 ")
 IF(CMAKE_C_COMPILER_WORKS)
   _detailed(
-"#      CMAKE_C_COMPILER:          ${CMAKE_C_COMPILER}\n")
+"#        CMAKE_C_COMPILER:          ${CMAKE_C_COMPILER}\n")
 ENDIF()
 
 
 IF(DEAL_II_STATIC_EXECUTABLE)
 _detailed(
 "#
-#       LINKAGE:                   STATIC
+#        LINKAGE:                   STATIC
 ")
 ELSE()
 _detailed(
 "#
-#       LINKAGE:                   DYNAMIC
+#        LINKAGE:                   DYNAMIC
 ")
 ENDIF()
 

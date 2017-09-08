@@ -14,7 +14,7 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
@@ -34,7 +34,7 @@ namespace aspect
     {
       indicators = 0;
 
-      QGauss<dim-1> quadrature (this->get_fe().base_element(this->introspection().base_elements.temperature).degree+1);
+      QGauss<dim-1> quadrature (this->introspection().polynomial_degree.temperature+1);
 
       KellyErrorEstimator<dim>::estimate (this->get_mapping(),
                                           this->get_dof_handler(),

@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,62 +14,18 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/material_model/simpler.h>
-#include <deal.II/base/parameter_handler.h>
 
-using namespace dealii;
 
 namespace aspect
 {
   namespace MaterialModel
   {
-    template <int dim>
-    bool
-    Simpler<dim>::
-    viscosity_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-
-    template <int dim>
-    bool
-    Simpler<dim>::
-    density_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    Simpler<dim>::
-    compressibility_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    Simpler<dim>::
-    specific_heat_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    Simpler<dim>::
-    thermal_conductivity_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-
     template <int dim>
     bool
     Simpler<dim>::
@@ -87,14 +43,6 @@ namespace aspect
     }
 
     template <int dim>
-    double
-    Simpler<dim>::
-    reference_density () const
-    {
-      return reference_rho;
-    }
-
-    template <int dim>
     void
     Simpler<dim>::
     evaluate(const MaterialModel::MaterialModelInputs<dim> &in,
@@ -108,6 +56,9 @@ namespace aspect
           out.specific_heat[i] = reference_specific_heat;
           out.thermal_conductivities[i] = k_value;
           out.compressibilities[i] = 0.0;
+
+          for (unsigned int c=0; c<in.composition[i].size(); ++c)
+            out.reaction_terms[i][c] = 0.0;
         }
 
     }
@@ -137,7 +88,7 @@ namespace aspect
                              "Units: $W/m/K$.");
           prm.declare_entry ("Reference specific heat", "1250",
                              Patterns::Double (0),
-                             "The value of the specific heat $cp$. "
+                             "The value of the specific heat $C_p$. "
                              "Units: $J/kg/K$.");
           prm.declare_entry ("Thermal expansion coefficient", "2e-5",
                              Patterns::Double (0),
@@ -170,6 +121,13 @@ namespace aspect
         prm.leave_subsection();
       }
       prm.leave_subsection();
+
+      // Declare dependencies on solution variables
+      this->model_dependence.viscosity = NonlinearDependence::none;
+      this->model_dependence.density = NonlinearDependence::temperature;
+      this->model_dependence.compressibility = NonlinearDependence::none;
+      this->model_dependence.specific_heat = NonlinearDependence::none;
+      this->model_dependence.thermal_conductivity = NonlinearDependence::none;
     }
   }
 }

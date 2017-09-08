@@ -38,7 +38,7 @@ end
 
 
 subsection Boundary temperature model
-  set Model name = initial temperature
+  set List of model names = initial temperature
 
   subsection Initial temperature
     # Temperature at the inner boundary (core mantle boundary). Units: K.
@@ -79,7 +79,7 @@ subsection Gravity model
 end
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = function # default: 
   subsection Function
     set Function constants  = l=250000
@@ -88,7 +88,7 @@ subsection Initial conditions
   end
 end
 
-subsection Compositional initial conditions
+subsection Initial composition model
   set Model name = function # default: 
   subsection Function
     set Function expression = 0;0

@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011, 2012, 2014 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,16 +14,19 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__geometry_model_spherical_shell_h
-#define __aspect__geometry_model_spherical_shell_h
+#ifndef _aspect_geometry_model_spherical_shell_h
+#define _aspect_geometry_model_spherical_shell_h
 
 #include <aspect/geometry_model/interface.h>
+#include <aspect/simulator_access.h>
 
+#include <deal.II/grid/tria_boundary_lib.h>
+#include <deal.II/grid/manifold_lib.h>
 
 namespace aspect
 {
@@ -42,9 +45,14 @@ namespace aspect
      * angle of the section of the shell we want to build.
      */
     template <int dim>
-    class SphericalShell : public Interface<dim>
+    class SphericalShell : public Interface<dim>, public SimulatorAccess<dim>
     {
       public:
+        /**
+         *
+         */
+        SphericalShell();
+
         /**
          * Generate a coarse mesh for the geometry described by this class.
          */
@@ -61,6 +69,19 @@ namespace aspect
         virtual
         double length_scale () const;
 
+        /**
+         * Return the depth that corresponds to the given
+         * position. The documentation of the base class (see
+         * GeometryModel::Interface::depth()) describes in detail how
+         * "depth" is interpreted in general.
+         *
+         * Computing a depth requires a geometry model to define a
+         * "vertical" direction. The current class considers the
+         * radial vector away from the origin as vertical and
+         * considers the "outer" boundary as the "surface". In almost
+         * all cases one will use a gravity model that also matches
+         * these definitions.
+         */
         virtual
         double depth(const Point<dim> &position) const;
 
@@ -77,7 +98,7 @@ namespace aspect
          *
          * The spherical shell model uses boundary indicators zero and one,
          * with zero corresponding to the inner surface and one corresponding
-         * to the outer surface. In 2d, if the geomery is only a slice of the
+         * to the outer surface. In 2d, if the geometry is only a slice of the
          * shell, boundary indicators 2 and 3 indicate the left and right
          * radial bounding lines.
          */
@@ -102,6 +123,15 @@ namespace aspect
         virtual
         bool
         has_curved_elements() const;
+
+        /**
+         * Return whether the given point lies within the domain specified
+         * by the geometry. This function does not take into account
+         * initial or dynamic surface topography.
+         */
+        virtual
+        bool
+        point_is_in_domain(const Point<dim> &p) const;
 
         /**
          * Declare the parameters this class takes through input files. The
@@ -141,7 +171,7 @@ namespace aspect
         double
         opening_angle () const;
 
-      public:
+      private:
         /**
          * Inner and outer radii of the spherical shell.
          */
@@ -156,6 +186,35 @@ namespace aspect
          * Number of tangential mesh cells in the initial, coarse mesh.
          */
         int n_cells_along_circumference;
+
+        /**
+         * The manifold that describes the geometry.
+         */
+        const SphericalManifold<dim> spherical_manifold;
+
+        /**
+         * Set the manifold ids on all cells (also boundaries) before
+         * refinement to generate well shaped cells.
+         */
+        void set_manifold_ids (parallel::distributed::Triangulation<dim> &triangulation) const;
+
+#if !DEAL_II_VERSION_GTE(9,0,0)
+        /**
+         * Clear manifold ids from boundaries after refinement so that
+         * the boundary objects can take over for versions of deal.II,
+         * in which manifolds could not provide the normal vectors that
+         * are necessary at boundaries.
+         */
+        void clear_manifold_ids (parallel::distributed::Triangulation<dim> &triangulation) const;
+
+        /**
+         * Boundary objects that are required until deal.II 9.0,
+         * because the manifold could not provide normal vectors
+         * up to this version.
+         */
+        const HyperShellBoundary<dim> boundary_shell;
+        const StraightBoundary<dim> straight_boundary;
+#endif
     };
   }
 }

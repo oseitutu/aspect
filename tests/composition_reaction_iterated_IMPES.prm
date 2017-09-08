@@ -1,5 +1,5 @@
 #########################################################
-# This is a variation of the composition-reaction test,
+# This is a variation of the composition_reaction test,
 # with the exception that we use a reaction term that
 # requires the iterated IMPES solver scheme to reach the 
 # correct reaction rate, which is one for the second 
@@ -58,7 +58,7 @@ end
 # We then set the temperature to one at the bottom and zero
 # at the top: 
 subsection Boundary temperature model
-  set Model name = box
+  set List of model names = box
   
   subsection Box
     set Bottom temperature = 1
@@ -87,7 +87,7 @@ subsection Gravity model
 end
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = function
   
   subsection Function
@@ -96,7 +96,7 @@ subsection Initial conditions
   end
 end
 
-subsection Compositional initial conditions
+subsection Initial composition model
   set Model name = function
   
   subsection Function

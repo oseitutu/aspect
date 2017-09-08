@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,12 +14,14 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/geometry_model/box.h>
+#include <aspect/geometry_model/initial_topography_model/zero_topography.h>
+#include <aspect/simulator_signals.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/tria_iterator.h>
@@ -33,6 +35,22 @@ namespace aspect
   {
     template <int dim>
     void
+    Box<dim>::initialize ()
+    {
+      // Get pointer to initial topography model
+      topo_model = const_cast<InitialTopographyModel::Interface<dim>*>(&this->get_initial_topography_model());
+      // Check that initial topography is required.
+      // If so, connect the initial topography function
+      // to the right signal.
+      if (dynamic_cast<InitialTopographyModel::ZeroTopography<dim>*>(topo_model) == 0)
+        this->get_signals().pre_set_initial_state.connect(std_cxx11::bind(&Box<dim>::topography,
+                                                                          std_cxx11::ref(*this),
+                                                                          std_cxx11::_1));
+    }
+
+
+    template <int dim>
+    void
     Box<dim>::
     create_coarse_mesh (parallel::distributed::Triangulation<dim> &coarse_grid) const
     {
@@ -43,7 +61,7 @@ namespace aspect
                                                  box_origin+extents,
                                                  true);
 
-      //Tell p4est about the periodicity of the mesh.
+      // Tell p4est about the periodicity of the mesh.
       std::vector<GridTools::PeriodicFacePair<typename parallel::distributed::Triangulation<dim>::cell_iterator> >
       periodicity_vector;
       for (int i=0; i<dim; ++i)
@@ -54,6 +72,45 @@ namespace aspect
 
       if (periodicity_vector.size() > 0)
         coarse_grid.add_periodicity (periodicity_vector);
+    }
+
+    template <int dim>
+    void
+    Box<dim>::
+    topography (typename parallel::distributed::Triangulation<dim> &grid) const
+    {
+      // Here we provide GridTools with the function to displace vertices
+      // in the vertical direction by an amount specified by the initial topography model
+      GridTools::transform(std_cxx11::bind(&Box<dim>::add_topography,
+                                           this,
+                                           std_cxx11::_1),
+                           grid);
+
+      this->get_pcout() << "   Added initial topography to grid" << std::endl << std::endl;
+    }
+
+
+    template <int dim>
+    Point<dim>
+    Box<dim>::
+    add_topography (const Point<dim> &x_y_z) const
+    {
+      // Get the surface x (,y) point
+      Point<dim-1> surface_point;
+      for (unsigned int d=0; d<dim-1; d++)
+        surface_point[d] = x_y_z[d];
+
+      // Get the surface topography at this point
+      const double topo = topo_model->value(surface_point);
+
+      // Compute the displacement of the z coordinate
+      const double ztopo = x_y_z[dim-1]/extents[dim-1] * topo;
+
+      // Compute the new point
+      Point<dim> x_y_ztopo = x_y_z;
+      x_y_ztopo[dim-1] += ztopo;
+
+      return x_y_ztopo;
     }
 
 
@@ -68,7 +125,6 @@ namespace aspect
         s.insert (i);
       return s;
     }
-
 
 
     template <int dim>
@@ -112,7 +168,6 @@ namespace aspect
     }
 
 
-
     template <int dim>
     std::set< std::pair< std::pair<types::boundary_id, types::boundary_id>, unsigned int> >
     Box<dim>::
@@ -152,22 +207,9 @@ namespace aspect
     double
     Box<dim>::depth(const Point<dim> &position) const
     {
+      // this depth does not take topography into consideration
       const double d = maximal_depth()-(position(dim-1)-box_origin[dim-1]);
-
-      // if we violate the bounds, check that we do so only very slightly and
-      // then just return maximal or minimal depth
-      if (d < 0)
-        {
-          Assert (d >= -1e-14*std::fabs(maximal_depth()), ExcInternalError());
-          return 0;
-        }
-      if (d > maximal_depth())
-        {
-          Assert (d <= (1.+1e-14)*maximal_depth(), ExcInternalError());
-          return maximal_depth();
-        }
-
-      return d;
+      return std::min (std::max (d, 0.), maximal_depth());
     }
 
 
@@ -180,7 +222,7 @@ namespace aspect
       Assert (depth <= maximal_depth(),
               ExcMessage ("Given depth must be less than or equal to the maximal depth of this geometry."));
 
-      // choose a point on the center axis of the domain
+      // choose a point on the center axis of the domain (without topography)
       Point<dim> p = extents/2+box_origin;
       p[dim-1] = extents[dim-1]+box_origin[dim-1]-depth;
 
@@ -200,6 +242,25 @@ namespace aspect
     Box<dim>::has_curved_elements() const
     {
       return false;
+    }
+
+    template <int dim>
+    bool
+    Box<dim>::point_is_in_domain(const Point<dim> &point) const
+    {
+      AssertThrow(this->get_free_surface_boundary_indicators().size() == 0 ||
+                  this->get_timestep_number() == 0,
+                  ExcMessage("After displacement of the free surface, this function can no longer be used to determine whether a point lies in the domain or not."));
+
+      AssertThrow(dynamic_cast<const InitialTopographyModel::ZeroTopography<dim>*>(&this->get_initial_topography_model()) != 0,
+                  ExcMessage("After adding topography, this function can no longer be used to determine whether a point lies in the domain or not."));
+
+      for (unsigned int d = 0; d < dim; d++)
+        if (point[d] > extents[d]+box_origin[d]+std::numeric_limits<double>::epsilon()*extents[d] ||
+            point[d] < box_origin[d]-std::numeric_limits<double>::epsilon()*extents[d])
+          return false;
+
+      return true;
     }
 
     template <int dim>
@@ -294,8 +355,10 @@ namespace aspect
       }
       prm.leave_subsection();
     }
+
   }
 }
+
 
 // explicit instantiations
 namespace aspect
@@ -312,6 +375,12 @@ namespace aspect
                                    "indicators 0 through 5 indicate left, right, front, back, bottom "
                                    "and top boundaries (see also the documentation of the deal.II class "
                                    "``GeometryInfo''). You can also use symbolic names ``left'', ``right'', "
-                                   "etc., to refer to these boundaries in input files.")
+                                   "etc., to refer to these boundaries in input files. "
+                                   "It is also possible to add initial topography to the box model. Note however that "
+                                   "this is done after the last initial adaptive refinement cycle. "
+                                   "Also, initial topography is supposed to be small, as it is not taken into account "
+                                   "when depth or a representative point is computed. ")
+
+
   }
 }

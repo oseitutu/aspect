@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,15 +14,18 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__geometry_model_chunk_h
-#define __aspect__geometry_model_chunk_h
+#ifndef _aspect_geometry_model_chunk_h
+#define _aspect_geometry_model_chunk_h
 
 #include <aspect/geometry_model/interface.h>
+#include <aspect/simulator_access.h>
+#include <aspect/compat.h>
+
 #include <deal.II/grid/manifold.h>
 #include <deal.II/base/function_lib.h>
 #include <deal.II/grid/grid_out.h>
@@ -48,9 +51,13 @@ namespace aspect
      * number of cells initialised in each dimension.
      */
     template <int dim>
-    class Chunk : public Interface<dim>
+    class Chunk : public Interface<dim>, public SimulatorAccess<dim>
     {
       public:
+
+#if !DEAL_II_VERSION_GTE(9,0,0)
+        void initialize ();
+#endif
 
         /**
          * Generate a coarse mesh for the geometry described by this class.
@@ -58,14 +65,23 @@ namespace aspect
         virtual
         void create_coarse_mesh (parallel::distributed::Triangulation<dim> &coarse_grid) const;
 
+#if !DEAL_II_VERSION_GTE(9,0,0)
+        /**
+         * Connect the set/clear manifold id functions to the post/pre_compute_no_normal_flux signals.
+         */
+        void
+        connect_to_signal(SimulatorSignals<dim> &signals);
+#endif
+
         /**
          * Return the set of boundary indicators that are used by this model.
          * This information is used to determine what boundary indicators can
          * be used in the input file.
          *
-         * The box model uses boundary indicators zero through 2*dim-1, with
-         * the first two being the faces perpendicular to the x-axis, the next
-         * two perpendicular to the y-axis, etc.
+         * The chunk model uses boundary indicators zero through 2*dim-1, with
+         * the first two being the faces perpendicular to the radius of the shell,
+         * the next two along lines of longitude and, in 3d, the next two
+         * along lines of latitude.
          */
         virtual
         std::set<types::boundary_id>
@@ -78,10 +94,10 @@ namespace aspect
          * describing which parts of the boundary have to satisfy which
          * boundary conditions.
          *
-         * This geometry returns the map <code>{{"left"->0}, {"right"->1},
-         * {"bottom"->2}, {"top"->3}}</code> in 2d, and <code>{{"left"->0},
-         * {"right"->1}, {"front"->2}, {"back"->3}, {"bottom"->4},
-         * {"top"->5}}</code> in 3d.
+         * This geometry returns the map <code>{{"bottom"->0}, {"top"->1},
+         * {"west"->2}, {"east"->3}}</code> in 2d, and <code>{{"bottom"->0},
+         * {"top"->1}, {"west"->2}, {"east"->3}, {"south"->4},
+         * {"north"->5}}</code> in 3d.
          */
         virtual
         std::map<std::string,types::boundary_id>
@@ -92,37 +108,94 @@ namespace aspect
          * Return the typical length scale one would expect of features in
          * this geometry, assuming realistic parameters.
          *
-        * As described in the first ASPECT paper, a length scale of
-        * 10km = 1e4m works well for the pressure scaling for earth
-        * sized spherical shells. use a length scale that
-        * yields this value for the R0,R1 corresponding to earth
-        * but otherwise scales like (R1-R0)
+         * As described in the first ASPECT paper, a length scale of
+         * 10km = 1e4m works well for the pressure scaling for earth
+         * sized spherical shells. use a length scale that
+         * yields this value for the R0,R1 corresponding to earth
+         * but otherwise scales like (R1-R0)
          */
         virtual
         double length_scale () const;
 
-
+        /**
+         * Return the depth that corresponds to the given
+         * position. The documentation of the base class (see
+         * GeometryModel::Interface::depth()) describes in detail how
+         * "depth" is interpreted in general.
+         *
+         * Computing a depth requires a geometry model to define a
+         * "vertical" direction. The current class considers the
+         * radial vector away from the origin as vertical and
+         * considers the "top" boundary as the surface. In almost
+         * all cases one will use a gravity model that also matches
+         * these definitions.
+         */
         virtual
         double depth(const Point<dim> &position) const;
 
         virtual
         Point<dim> representative_point(const double depth) const;
 
+        /**
+         * Return the longitude at the western edge of the chunk
+         * Measured in radians
+         */
         virtual
-        double start_longitude() const;
+        double west_longitude() const;
 
+        /**
+         * Return the longitude at the eastern edge of the chunk
+         * Measured in radians
+         */
         virtual
-        double end_longitude() const;
+        double east_longitude() const;
 
+        /**
+         * Returns the longitude range of the chunk
+         * Measured in radians
+         */
         virtual
         double longitude_range() const;
 
+        /**
+         * Return the latitude at the southern edge of the chunk
+         * Measured in radians from the equator
+         */
+        virtual
+        double south_latitude() const;
+
+        /**
+         * Return the latitude at the northern edge of the chunk
+         * Measured in radians from the equator
+         */
+        virtual
+        double north_latitude() const;
+
+        /**
+         * Return the latitude range of the chunk
+         * Measured in radians
+         */
+        virtual
+        double latitude_range() const;
+
+        /**
+         * Return the maximum depth from the surface of the model
+         * Measured in meters
+         */
         virtual
         double maximal_depth() const;
 
+        /**
+         * Return the inner radius of the chunk
+         * Measured in meters
+         */
         virtual
         double inner_radius() const;
 
+        /**
+         * Return the outer radius of the chunk
+         * Measured in meters
+         */
         virtual
         double outer_radius() const;
 
@@ -130,11 +203,20 @@ namespace aspect
         /**
          * @copydoc Interface::has_curved_elements()
          *
-         * A box has only straight boundaries and cells, so return false.
+         * A chunk has curved boundaries and cells, so return true.
          */
         virtual
         bool
         has_curved_elements() const;
+
+        /**
+         * Return whether the given point lies within the domain specified
+         * by the geometry. This function does not take into account
+         * initial or dynamic surface topography.
+         */
+        virtual
+        bool
+        point_is_in_domain(const Point<dim> &p) const;
 
         /**
          * Declare the parameters this class takes through input files.
@@ -153,14 +235,14 @@ namespace aspect
       private:
         /**
          * Minimum depth, longitude-depth or
-        * longitude-latitude-depth point
+         * longitude-latitude-depth point
          */
         Point<dim> point1;
 
         /**
-        * Maximum depth, longitude-depth or
+         * Maximum depth, longitude-depth or
          * longitude-latitude-depth point
-               */
+         */
         Point<dim> point2;
 
         /**
@@ -171,14 +253,22 @@ namespace aspect
         /**
          * ChunkGeometry is a class that implements the interface of
          * ChartManifold. The function push_forward takes a point
-         * in the reference (lat,long,radius) domain and transforms
+         * in the reference (radius,lon,lat) domain and transforms
          * it into real space (cartesian). The inverse function
          * pull_back reverses this operation.
+         * The push_forward_gradient provides derivatives of the
+         * reference coordinates to the real space coordinates,
+         * which are used in computing normal vectors.
+         * In set_min_longitude the minimum longitude is set,
+         * which is used to test the quadrant of returned longitudes
+         * in the pull_back function.
          */
 
         class ChunkGeometry : public ChartManifold<dim,dim>
         {
           public:
+            ChunkGeometry();
+
             virtual
             Point<dim>
             pull_back(const Point<dim> &space_point) const;
@@ -186,6 +276,18 @@ namespace aspect
             virtual
             Point<dim>
             push_forward(const Point<dim> &chart_point) const;
+
+            virtual
+            DerivativeForm<1, dim, dim>
+            push_forward_gradient(const Point<dim> &chart_point) const;
+
+            virtual
+            void
+            set_min_longitude(const double p1_lon);
+
+          private:
+            // The minimum longitude of the domain
+            double point1_lon;
         };
 
         /**
@@ -193,9 +295,10 @@ namespace aspect
          */
         ChunkGeometry manifold;
 
-        static void set_manifold_ids (Triangulation<dim> &triangulation);
-        static void clear_manifold_ids (Triangulation<dim> &triangulation);
-
+#if !DEAL_II_VERSION_GTE(9,0,0)
+        void set_manifold_ids (typename parallel::distributed::Triangulation<dim> &triangulation);
+        void clear_manifold_ids (typename parallel::distributed::Triangulation<dim> &triangulation);
+#endif
     };
   }
 }

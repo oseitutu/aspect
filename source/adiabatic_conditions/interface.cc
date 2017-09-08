@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,7 +14,7 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
@@ -61,6 +61,68 @@ namespace aspect
     {}
 
 
+    template <int dim>
+    void Interface<dim>::get_adiabatic_temperature_profile(std::vector<double> &values) const
+    {
+      const unsigned int num_slices = values.size();
+      const double max_depth = this->get_geometry_model().maximal_depth();
+      double depth = 0.0;
+
+      for (unsigned int n = 0 ; n < num_slices; n++)
+        {
+          depth = n * max_depth / (num_slices-1);
+          const Point<dim> p = this->get_geometry_model().representative_point(depth);
+          values[n] = temperature(p);
+        }
+    }
+
+
+    template <int dim>
+    void Interface<dim>::get_adiabatic_pressure_profile(std::vector<double> &values) const
+    {
+      const unsigned int num_slices = values.size();
+      const double max_depth = this->get_geometry_model().maximal_depth();
+      double depth = 0.0;
+
+      for (unsigned int n = 0 ; n < num_slices; n++)
+        {
+          depth = n * max_depth / (num_slices-1);
+          const Point<dim> p = this->get_geometry_model().representative_point(depth);
+          values[n] = pressure(p);
+        }
+    }
+
+    template <int dim>
+    void Interface<dim>::get_adiabatic_density_profile(std::vector<double> &values) const
+    {
+      const unsigned int num_slices = values.size();
+      const double max_depth = this->get_geometry_model().maximal_depth();
+      double depth = 0.0;
+
+      for (unsigned int n = 0 ; n < num_slices; n++)
+        {
+          depth = n * max_depth / (num_slices-1);
+          const Point<dim> p = this->get_geometry_model().representative_point(depth);
+          values[n] = density(p);
+        }
+    }
+
+    template <int dim>
+    void Interface<dim>::get_adiabatic_density_derivative_profile(std::vector<double> &values) const
+    {
+      const unsigned int num_slices = values.size();
+      const double max_depth = this->get_geometry_model().maximal_depth();
+      double depth = 0.0;
+
+      for (unsigned int n = 0 ; n < num_slices; n++)
+        {
+          depth = n * max_depth / (num_slices-1);
+          const Point<dim> p = this->get_geometry_model().representative_point(depth);
+          values[n] = density_derivative(p);
+        }
+    }
+
+
 // -------------------------------- Deal with registering models and automating
 // -------------------------------- their setup and selection at run time
 
@@ -69,8 +131,8 @@ namespace aspect
       std_cxx11::tuple
       <void *,
       void *,
-      internal::Plugins::PluginList<Interface<2> >,
-      internal::Plugins::PluginList<Interface<3> > > registered_plugins;
+      aspect::internal::Plugins::PluginList<Interface<2> >,
+      aspect::internal::Plugins::PluginList<Interface<3> > > registered_plugins;
     }
 
 
@@ -130,6 +192,15 @@ namespace aspect
       std_cxx11::get<dim>(registered_plugins).declare_parameters (prm);
     }
 
+
+    template <int dim>
+    void
+    write_plugin_graph (std::ostream &out)
+    {
+      std_cxx11::get<dim>(registered_plugins).write_plugin_graph ("Adiabatic conditions interface",
+                                                                  out);
+    }
+
   }
 }
 
@@ -164,6 +235,10 @@ namespace aspect
   template  \
   void \
   declare_parameters<dim> (ParameterHandler &); \
+  \
+  template \
+  void \
+  write_plugin_graph<dim> (std::ostream &); \
   \
   template \
   Interface<dim> * \

@@ -14,7 +14,7 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
@@ -36,13 +36,12 @@ namespace aspect
                    ExcMessage ("This refinement criterion can not be used when no "
                                "compositional fields are active!"));
       indicators = 0;
+      Vector<float> this_indicator (indicators.size());
+      QGauss<dim-1> quadrature (this->introspection().polynomial_degree.compositional_fields+1);
 
       for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
         {
-          Vector<float> this_indicator (indicators.size());
-
-          QGauss<dim-1> quadrature (this->get_fe().base_element(this->introspection().base_elements.compositional_fields).degree+1);
-
+          this_indicator = 0;
           KellyErrorEstimator<dim>::estimate (this->get_mapping(),
                                               this->get_dof_handler(),
                                               quadrature,
@@ -53,9 +52,8 @@ namespace aspect
                                               0,
                                               0,
                                               this->get_triangulation().locally_owned_subdomain());
-          for (unsigned int i=0; i<indicators.size(); ++i)
-            this_indicator[i] *= composition_scaling_factors[c];
-          indicators += this_indicator;
+          // compute indicators += c*this_indicator:
+          indicators.add(composition_scaling_factors[c], this_indicator);
         }
     }
 

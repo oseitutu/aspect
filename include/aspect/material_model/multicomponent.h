@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2014 by the authors of the ASPECT code.
+  Copyright (C) 2014 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,12 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
-
-#ifndef __aspect__model_multicomponent_h
-#define __aspect__model_multicomponent_h
+#ifndef _aspect_material_model_multicomponent_h
+#define _aspect_material_model_multicomponent_h
 
 #include <aspect/material_model/interface.h>
 #include <aspect/simulator_access.h>
@@ -65,33 +64,18 @@ namespace aspect
     {
       public:
 
+        /**
+         * Function to compute the material properties in @p out given the
+         * inputs in @p in. If MaterialModelInputs.strain_rate has the length
+         * 0, then the viscosity does not need to be computed.
+         */
         virtual void evaluate(const MaterialModel::MaterialModelInputs<dim> &in,
                               MaterialModel::MaterialModelOutputs<dim> &out) const;
-
-
-        /**
-         * @}
-         */
 
         /**
          * @name Qualitative properties one can ask a material model
          * @{
          */
-
-        virtual bool
-        viscosity_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        virtual bool
-        density_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        virtual bool
-        compressibility_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        virtual bool
-        specific_heat_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        virtual bool
-        thermal_conductivity_depends_on (const NonlinearDependence::Dependence dependence) const;
 
         /**
          * This model is not compressible, so this returns false.
@@ -106,14 +90,6 @@ namespace aspect
          * @{
          */
         virtual double reference_viscosity () const;
-
-        virtual double reference_density () const;
-
-        virtual double reference_thermal_expansion_coefficient () const;
-
-        double reference_thermal_diffusivity () const;
-
-        double reference_cp () const;
         /**
          * @}
          */
@@ -160,11 +136,11 @@ namespace aspect
         double reference_T;
 
         /**
-        * Enumeration for selecting which averaging scheme to use.
-        * Select between harmonic, arithmetic, geometric, and
-        * maximum_composition.  The max composition scheme simply uses the
-        * parameter of whichever field has the highest volume fraction.
-        */
+         * Enumeration for selecting which averaging scheme to use. Select
+         * between harmonic, arithmetic, geometric, and maximum_composition.
+         * The max composition scheme simply uses the parameter of whichever
+         * field has the highest volume fraction.
+         */
         enum AveragingScheme
         {
           harmonic,
@@ -192,7 +168,7 @@ namespace aspect
         std::vector<double> viscosities;
 
         /**
-         * Vector for field thermal expnsivities, read from parameter file.
+         * Vector for field thermal expansivities, read from parameter file.
          */
         std::vector<double> thermal_expansivities;
 

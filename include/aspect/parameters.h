@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,13 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__parameters_h
-#define __aspect__parameters_h
+#ifndef _aspect_parameters_h
+#define _aspect_parameters_h
 
 #include <deal.II/base/parameter_handler.h>
 
@@ -94,6 +94,146 @@ namespace aspect
     };
 
     /**
+     * A struct that describes the available methods to solve
+     * advected fields. This type is at the moment only used to determine how
+     * to advect each compositional field.
+     */
+    struct AdvectionFieldMethod
+    {
+      enum Kind
+      {
+        fem_field,
+        particles
+      };
+    };
+
+    /**
+     * A struct that contains information about which
+     * formulation of the basic equations should be solved,
+     * i.e. which terms to consider, which terms to neglect, and
+     * which to simplify in different ways.
+     */
+    struct Formulation
+    {
+      /**
+       * This enum lists available formulations that
+       * determine the combined approximations made in
+       * all solved equations. 'Custom' allows to set
+       * approximations individually for single equations.
+       */
+      enum Kind
+      {
+        boussinesq_approximation,
+        anelastic_liquid_approximation,
+        isothermal_compression,
+        custom
+      };
+
+      /**
+       * This function translates an input string into the
+       * available enum options.
+       */
+      static
+      Kind
+      parse(const std::string &input)
+      {
+        if (input == "isothermal compression")
+          return Formulation::isothermal_compression;
+        else if (input == "anelastic liquid approximation")
+          return Formulation::anelastic_liquid_approximation;
+        else if (input == "Boussinesq approximation")
+          return Formulation::boussinesq_approximation;
+        else if (input == "custom")
+          return Formulation::custom;
+        else
+          AssertThrow(false, ExcNotImplemented());
+
+        return Formulation::Kind();
+      }
+
+      /**
+       * This struct contains information about the approximation
+       * made to the term containing the gradient of the density
+       * in the mass conservation equation. The different possible
+       * ways to approximate this term are described in the manual.
+       */
+      struct MassConservation
+      {
+        /**
+         * This enum lists available approximations to the
+         * density gradient term of the mass conservation equation.
+         */
+        enum Kind
+        {
+          isothermal_compression,
+          reference_density_profile,
+          implicit_reference_density_profile,
+          incompressible,
+          ask_material_model
+        };
+
+        /**
+         * This function translates an input string into the
+         * available enum options.
+         */
+        static Kind
+        parse(const std::string &input)
+        {
+          if (input == "isothermal compression")
+            return Formulation::MassConservation::isothermal_compression;
+          else if (input == "reference density profile")
+            return Formulation::MassConservation::reference_density_profile;
+          else if (input == "implicit reference density profile")
+            return Formulation::MassConservation::implicit_reference_density_profile;
+          else if (input == "incompressible")
+            return Formulation::MassConservation::incompressible;
+          else if (input == "ask material model")
+            return Formulation::MassConservation::ask_material_model;
+          else
+            AssertThrow(false, ExcNotImplemented());
+
+          return Formulation::MassConservation::Kind();
+        };
+      };
+
+      /**
+       * This struct contains information about the approximation
+       * made to temperature equation. The different possible
+       * ways to approximate this term are described in the manual.
+       */
+      struct TemperatureEquation
+      {
+        /**
+         * This enum lists available approximations to the
+         * density in the temperature equation.
+         */
+        enum Kind
+        {
+          real_density,
+          reference_density_profile
+        };
+
+        /**
+         * This function translates an input string into the
+         * available enum options.
+         */
+        static
+        Kind
+        parse(const std::string &input)
+        {
+          if (input == "real density")
+            return Formulation::TemperatureEquation::real_density;
+          else if (input == "reference density profile")
+            return Formulation::TemperatureEquation::reference_density_profile;
+          else
+            AssertThrow(false, ExcNotImplemented());
+
+          return Formulation::TemperatureEquation::Kind();
+        };
+      };
+    };
+
+    /**
      * Constructor. Fills the values of member functions from the given
      * parameter object.
      *
@@ -162,10 +302,14 @@ namespace aspect
     typename NonlinearSolver::Kind nonlinear_solver;
 
     double                         nonlinear_tolerance;
+    double                         nonlinear_switch_tolerance;
     bool                           resume_computation;
     double                         start_time;
     double                         CFL_number;
     double                         maximum_time_step;
+    double                         reaction_time_step;
+    unsigned int                   reaction_steps_per_advection_step;
+    bool                           use_artificial_viscosity_smoothing;
     bool                           use_conduction_timestep;
     bool                           convert_to_years;
     std::string                    output_directory;
@@ -174,10 +318,60 @@ namespace aspect
     unsigned int                   timing_output_frequency;
     bool                           use_direct_stokes_solver;
     double                         linear_stokes_solver_tolerance;
+    double                         linear_solver_A_block_tolerance;
+    double                         linear_solver_S_block_tolerance;
+    std::string                    AMG_smoother_type;
+    unsigned int                   AMG_smoother_sweeps;
+    double                         AMG_aggregation_threshold;
+    bool                           AMG_output_details;
     unsigned int                   max_nonlinear_iterations;
+    unsigned int                   max_nonlinear_iterations_in_prerefinement;
     unsigned int                   n_cheap_stokes_solver_steps;
+    unsigned int                   n_expensive_stokes_solver_steps;
     double                         temperature_solver_tolerance;
     double                         composition_solver_tolerance;
+    bool                           use_operator_splitting;
+    unsigned int                   max_pre_newton_nonlinear_iterations;
+    unsigned int                   max_newton_line_search_iterations;
+    double                         switch_initial_newton_residual;
+    double                         minimum_linear_stokes_solver_tolerance;
+
+    // possibly find a better place for these variables
+    double                         newton_theta;
+    double                         newton_residual;
+    /**
+     * @}
+     */
+
+    /**
+     * @name Formulation settings
+     * @{
+     */
+
+    /**
+     * This variable determines which of the several ways to formulate the
+     * equations ASPECT will solve.
+     * Common formulations are the Boussinesq or Anelastic Liquid
+     * Approximations (BA, ALA). ASPECT's original formulation is termed
+     * 'isothermal compression'. 'Custom' allows
+     * to set the approximations individually per equation.
+     */
+    typename Formulation::Kind formulation;
+
+    /**
+     * Determines how to formulate the mass conservation equation in ASPECT.
+     * Common approximations are 'incompressible' or 'reference density profile'.
+     * ASPECT's original formulation is termed 'isothermal compression'. See the
+     * manual for more details about the individual terms.
+     */
+    typename Formulation::MassConservation::Kind formulation_mass_conservation;
+
+    /**
+     * Determines how to formulate the density in the temperature equation
+     * in ASPECT. Possible approximations are 'reference density profile' or
+     * 'real density'.
+     */
+    typename Formulation::TemperatureEquation::Kind formulation_temperature_equation;
 
     /**
      * @}
@@ -188,8 +382,8 @@ namespace aspect
      * @{
      */
     bool                           include_melt_transport;
-    double                         melt_transport_threshold;
-    double                         radiogenic_heating_rate;
+    bool                           enable_additional_stokes_rhs;
+
     std::set<types::boundary_id> fixed_temperature_boundary_indicators;
     std::set<types::boundary_id> fixed_composition_boundary_indicators;
     std::set<types::boundary_id> zero_velocity_boundary_indicators;
@@ -228,10 +422,12 @@ namespace aspect
     unsigned int                   initial_adaptive_refinement;
     double                         refinement_fraction;
     double                         coarsening_fraction;
+    bool                           adapt_by_fraction_of_cells;
     unsigned int                   min_grid_level;
     std::vector<double>            additional_refinement_times;
     unsigned int                   adaptive_refinement_interval;
     bool                           run_postprocessors_on_initial_refinement;
+    bool                           run_postprocessors_on_nonlinear_iterations;
     /**
      * @}
      */
@@ -244,6 +440,14 @@ namespace aspect
     unsigned int                   stabilization_alpha;
     double                         stabilization_c_R;
     double                         stabilization_beta;
+    double                         stabilization_gamma;
+    double                         discontinuous_penalty;
+    bool                           use_limiter_for_discontinuous_temperature_solution;
+    bool                           use_limiter_for_discontinuous_composition_solution;
+    double                         global_temperature_max_preset;
+    double                         global_temperature_min_preset;
+    std::vector<double>            global_composition_max_preset;
+    std::vector<double>            global_composition_min_preset;
     /**
      * @}
      */
@@ -264,6 +468,8 @@ namespace aspect
      */
     unsigned int                   stokes_velocity_degree;
     bool                           use_locally_conservative_discretization;
+    bool                           use_discontinuous_temperature_discretization;
+    bool                           use_discontinuous_composition_discretization;
     unsigned int                   temperature_degree;
     unsigned int                   composition_degree;
     std::string                    pressure_normalization;
@@ -279,6 +485,24 @@ namespace aspect
      */
     unsigned int                   n_compositional_fields;
     std::vector<std::string>       names_of_compositional_fields;
+
+    /**
+     * A vector that contains the advection field method for every compositional
+     * field. Consequently the vector has n_compositional_fields entries.
+     */
+    std::vector<typename AdvectionFieldMethod::Kind> compositional_field_methods;
+
+    /**
+     * Map from compositional index to a pair "particle property", "component",
+     * where particle property is a string that can be mapped to one of the
+     * particle property plugins.
+     * Component denotes which component of the particle property is to be
+     * mapped in case there are several. Therefore, it is optional to specify
+     * the component and it is of the format "[0][1][2]". In case no component
+     * is specified it defaults to 0.
+     */
+    std::map<unsigned int, std::pair<std::string,unsigned int> > mapped_particle_properties;
+
     std::vector<unsigned int>      normalized_fields;
     /**
      * @}

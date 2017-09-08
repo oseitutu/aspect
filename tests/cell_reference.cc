@@ -11,7 +11,7 @@ namespace aspect
 
     template <int dim>
     class CellMaterial :
-        public aspect::MaterialModel::Simpler<dim>, aspect::SimulatorAccess<dim>
+      public aspect::MaterialModel::Simpler<dim>, aspect::SimulatorAccess<dim>
     {
       public:
         void
@@ -20,9 +20,9 @@ namespace aspect
         {
           Simpler<dim>::evaluate(in,out);
 
-          if (in.cell)
+          if (in.current_cell.state() == IteratorState::valid)
             {
-              std::cout << "Level: " << (*in.cell)->level() << " Index: " << (*in.cell)->index() << std::endl;
+              std::cout << "Level: " << in.current_cell->level() << " Index: " << in.current_cell->index() << std::endl;
             }
         }
     };

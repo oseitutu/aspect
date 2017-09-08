@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2014 by the authors of the ASPECT code.
+  Copyright (C) 2014 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,14 +14,14 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
-#ifndef __aspect__geometry_model_sphere_h
-#define __aspect__geometry_model_sphere_h
+#ifndef _aspect_geometry_model_sphere_h
+#define _aspect_geometry_model_sphere_h
 
 #include <aspect/geometry_model/interface.h>
-
+#include <aspect/simulator_access.h>
 
 namespace aspect
 {
@@ -30,7 +30,7 @@ namespace aspect
     using namespace dealii;
 
     template <int dim>
-    class Sphere : public Interface<dim>
+    class Sphere : public Interface<dim>, public SimulatorAccess<dim>
     {
       public:
         /**
@@ -49,6 +49,19 @@ namespace aspect
         virtual
         double length_scale () const;
 
+        /**
+         * Return the depth that corresponds to the given
+         * position. The documentation of the base class (see
+         * GeometryModel::Interface::depth()) describes in detail how
+         * "depth" is interpreted in general.
+         *
+         * Computing a depth requires a geometry model to define a
+         * "vertical" direction. The current class considers the
+         * radial vector away from the origin as vertical and
+         * considers the "outer" boundary as the "surface". In almost
+         * all cases one will use a gravity model that also matches
+         * these definitions.
+         */
         virtual
         double depth(const Point<dim> &position) const;
 
@@ -87,6 +100,15 @@ namespace aspect
         bool
         has_curved_elements() const;
 
+        /**
+         * Return whether the given point lies within the domain specified
+         * by the geometry. This function does not take into account
+         * initial or dynamic surface topography.
+         */
+        virtual
+        bool
+        point_is_in_domain(const Point<dim> &p) const;
+
         static
         void
         declare_parameters (ParameterHandler &prm);
@@ -101,7 +123,7 @@ namespace aspect
         double
         radius () const;
 
-      public:
+      private:
         /**
          * Radius of the sphere
          */

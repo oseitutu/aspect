@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,14 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/global.h>
 #include <aspect/geometry_model/interface.h>
+#include <aspect/simulator_access.h>
 #include <deal.II/base/exceptions.h>
 #include <deal.II/base/std_cxx11/tuple.h>
 
@@ -39,22 +40,26 @@ namespace aspect
     {}
 
 
-    template<int dim>
+
+    template <int dim>
     std::map<std::string,types::boundary_id>
     Interface<dim>::get_symbolic_boundary_names_map() const
     {
-      //return an empty map in the base class
+      // return an empty map in the base class
       return std::map<std::string,types::boundary_id>();
     }
 
 
-    template<int dim>
+
+    template <int dim>
     std::set< std::pair< std::pair<types::boundary_id, types::boundary_id>, unsigned int > >
     Interface<dim>::get_periodic_boundary_pairs() const
     {
-      //return an empty set in the base class
+      // return an empty set in the base class
       return std::set< std::pair< std::pair< types::boundary_id, types::boundary_id>, unsigned int > >();
     }
+
+
 
     template <int dim>
     bool
@@ -64,11 +69,37 @@ namespace aspect
     }
 
 
+
+    template <int dim>
+    std_cxx11::array<double,dim>
+    Interface<dim>::cartesian_to_natural_coordinates(const Point<dim> &) const
+    {
+      Assert (false,
+              ExcMessage ("The cartesian_to_natural_coordinates function has "
+                          "not been implemented in this geometry model."));
+      return std_cxx11::array<double,dim>();
+    }
+
+
+
+    template <int dim>
+    Point<dim>
+    Interface<dim>::natural_to_cartesian_coordinates(const std_cxx11::array<double,dim> &) const
+    {
+      Assert (false,
+              ExcMessage ("The natural_to_cartesian_coordinates function has "
+                          "not been implemented in this geometry model."));
+      return Point<dim>();
+    }
+
+
+
     template <int dim>
     void
     Interface<dim>::
     declare_parameters (dealii::ParameterHandler &)
     {}
+
 
 
     template <int dim>
@@ -91,6 +122,12 @@ namespace aspect
           name.erase (name.begin());
         while ((name.size() > 0) && (name[name.size()-1] == ' '))
           name.erase (name.end()-1);
+
+        // backwards compatibility (rename boundaries to all use "top" and "bottom"
+        if (name == "surface" || name == "outer")
+          name = "top";
+        else if (name == "inner")
+          name = "bottom";
 
         // see if the given name is a symbolic one
         if (boundary_names_mapping.find (name) != boundary_names_mapping.end())
@@ -167,7 +204,7 @@ namespace aspect
         if (p->second == boundary_id)
           {
             Assert (name == "",
-                    ExcMessage ("This material model appears to provide multiple "
+                    ExcMessage ("This geometry model appears to provide multiple "
                                 "names for the boundary with indicator <" +
                                 Utilities::int_to_string (boundary_id) + ">."));
             name = p->first;
@@ -185,8 +222,8 @@ namespace aspect
       std_cxx11::tuple
       <void *,
       void *,
-      internal::Plugins::PluginList<Interface<2> >,
-      internal::Plugins::PluginList<Interface<3> > > registered_plugins;
+      aspect::internal::Plugins::PluginList<Interface<2> >,
+      aspect::internal::Plugins::PluginList<Interface<3> > > registered_plugins;
     }
 
 
@@ -222,9 +259,9 @@ namespace aspect
       // the empty string) then the value we get here is the empty string. If
       // we don't catch this case here, we end up with awkward downstream
       // errors because the value obviously does not conform to the Pattern.
-      AssertThrow(model_name != "",
+      AssertThrow(model_name != "unspecified",
                   ExcMessage("You need to select a Geometry model "
-                             "('set Model name' in 'subsection Geometry model')."));
+                             "(`set Model name' in `subsection Geometry model')."));
 
       return std_cxx11::get<dim>(registered_plugins).create_plugin (model_name,
                                                                     "Geometry model::model name",
@@ -242,25 +279,26 @@ namespace aspect
       {
         const std::string pattern_of_names
           = std_cxx11::get<dim>(registered_plugins).get_pattern_of_names ();
-        try
-          {
-            prm.declare_entry ("Model name", "",
-                               Patterns::Selection (pattern_of_names),
-                               "Select one of the following models:\n\n"
-                               +
-                               std_cxx11::get<dim>(registered_plugins).get_description_string());
-          }
-        catch (const ParameterHandler::ExcValueDoesNotMatchPattern &)
-          {
-            // ignore the fact that the default value for this parameter
-            // does not match the pattern
-          }
+        prm.declare_entry ("Model name", "unspecified",
+                           Patterns::Selection (pattern_of_names+"|unspecified"),
+                           "Select one of the following models:\n\n"
+                           +
+                           std_cxx11::get<dim>(registered_plugins).get_description_string());
       }
       prm.leave_subsection ();
 
       std_cxx11::get<dim>(registered_plugins).declare_parameters (prm);
     }
 
+
+
+    template <int dim>
+    void
+    write_plugin_graph (std::ostream &out)
+    {
+      std_cxx11::get<dim>(registered_plugins).write_plugin_graph ("Geometry model interface",
+                                                                  out);
+    }
   }
 }
 
@@ -296,6 +334,10 @@ namespace aspect
   template  \
   void \
   declare_parameters<dim> (ParameterHandler &); \
+  \
+  template \
+  void \
+  write_plugin_graph<dim> (std::ostream &); \
   \
   template \
   Interface<dim> * \

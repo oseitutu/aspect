@@ -4,11 +4,12 @@ subsection Material model
   set Model name = Steinberger
 
   subsection Steinberger model
-    set Data directory                   = $ASPECT_SOURCE_DIR/data/material-model/steinberger/
-    set Material file names              = test-steinberger-compressible/testdata.txt
+    set Data directory                   = $ASPECT_SOURCE_DIR/data/material-model/steinberger/test-steinberger-compressible/
+    set Material file names              = testdata.txt
+    set Radial viscosity file name       = test-radial-visc.txt
+    set Lateral viscosity file name      = test-viscosity-prefactor.txt
     set Bilinear interpolation           = true
     set Latent heat                      = false
-    set Compressible                     = true
     set Reference viscosity              = 1e21
   end
 end
@@ -33,7 +34,7 @@ set Adiabatic surface temperature          = 1600.0
 
 
 subsection Boundary temperature model
-  set Model name = spherical constant
+  set List of model names = spherical constant
   subsection Spherical constant
     set Inner temperature = 4250
     set Outer temperature = 273
@@ -77,7 +78,7 @@ end
 
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = harmonic perturbation
   subsection Harmonic perturbation
     set Magnitude = 200.0
@@ -95,8 +96,6 @@ end
 
 
 subsection Model settings
-  set Include adiabatic heating               = false
-  set Include shear heating                   = false # default: true
 
 
   set Fixed temperature boundary indicators   = 0, 1

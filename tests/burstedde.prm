@@ -68,10 +68,10 @@ end
 # temperature boundary conditions.
 
 subsection Boundary temperature model
-  set Model name = box
+  set List of model names = box
 end
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = function
 
   subsection Function
@@ -94,7 +94,7 @@ subsection Mesh refinement
 end
 
 
-############### Parameters describing the what to do with the solution
+############### Parameters describing what to do with the solution
 # The final section allows us to choose which postprocessors to
 # run at the end of each time step. 
 

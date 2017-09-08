@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,12 +14,13 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/geometry_model/sphere.h>
+#include <aspect/geometry_model/initial_topography_model/zero_topography.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/tria_boundary_lib.h>
@@ -58,7 +59,7 @@ namespace aspect
     Sphere<dim>::
     get_symbolic_boundary_names_map () const
     {
-      static const std::pair<std::string,types::boundary_id> mapping("surface", 0);
+      static const std::pair<std::string,types::boundary_id> mapping("top", 0);
       return std::map<std::string,types::boundary_id> (&mapping,
                                                        &mapping+1);
     }
@@ -118,6 +119,28 @@ namespace aspect
     {
       return true;
     }
+
+
+
+    template <int dim>
+    bool
+    Sphere<dim>::point_is_in_domain(const Point<dim> &point) const
+    {
+      AssertThrow(this->get_free_surface_boundary_indicators().size() == 0 ||
+                  this->get_timestep_number() == 0,
+                  ExcMessage("After displacement of the free surface, this function can no longer be used to determine whether a point lies in the domain or not."));
+
+      AssertThrow(dynamic_cast<const InitialTopographyModel::ZeroTopography<dim>*>(&this->get_initial_topography_model()) != 0,
+                  ExcMessage("After adding topography, this function can no longer be used to determine whether a point lies in the domain or not."));
+
+      const double radius = point.norm();
+
+      if (radius > R+std::numeric_limits<double>::epsilon()*R)
+        return false;
+
+      return true;
+    }
+
 
 
     template <int dim>

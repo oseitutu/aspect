@@ -14,13 +14,15 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/global.h>
 #include <aspect/prescribed_stokes_solution/interface.h>
+#include <aspect/simulator_access.h>
+
 
 namespace aspect
 {
@@ -34,6 +36,12 @@ namespace aspect
     template <int dim>
     void
     Interface<dim>::initialize ()
+    {}
+
+
+    template <int dim>
+    void
+    Interface<dim>::update ()
     {}
 
 
@@ -58,8 +66,8 @@ namespace aspect
       std_cxx1x::tuple
       <void *,
       void *,
-      internal::Plugins::PluginList<Interface<2> >,
-      internal::Plugins::PluginList<Interface<3> > > registered_plugins;
+      aspect::internal::Plugins::PluginList<Interface<2> >,
+      aspect::internal::Plugins::PluginList<Interface<3> > > registered_plugins;
     }
 
 
@@ -89,7 +97,7 @@ namespace aspect
       }
       prm.leave_subsection ();
 
-      if (model_name == "")
+      if (model_name == "unspecified")
         return NULL;
 
       Interface<dim> *plugin = std_cxx1x::get<dim>(registered_plugins).create_plugin (model_name,
@@ -108,23 +116,25 @@ namespace aspect
       {
         const std::string pattern_of_names
           = std_cxx1x::get<dim>(registered_plugins).get_pattern_of_names ();
-        try
-          {
-            prm.declare_entry ("Model name", "",
-                               Patterns::Selection (pattern_of_names),
-                               "Select one of the following models:\n\n"
-                               +
-                               std_cxx1x::get<dim>(registered_plugins).get_description_string());
-          }
-        catch (const ParameterHandler::ExcValueDoesNotMatchPattern &)
-          {
-            // ignore the fact that the default value for this parameter
-            // does not match the pattern
-          }
+        prm.declare_entry ("Model name", "unspecified",
+                           Patterns::Selection (pattern_of_names+"|unspecified"),
+                           "Select one of the following models:\n\n"
+                           +
+                           std_cxx1x::get<dim>(registered_plugins).get_description_string());
       }
       prm.leave_subsection ();
 
       std_cxx1x::get<dim>(registered_plugins).declare_parameters (prm);
+    }
+
+
+
+    template <int dim>
+    void
+    write_plugin_graph (std::ostream &out)
+    {
+      std_cxx11::get<dim>(registered_plugins).write_plugin_graph ("Prescribed Stokes solution interface",
+                                                                  out);
     }
   }
 }
@@ -160,6 +170,10 @@ namespace aspect
   template  \
   void \
   declare_parameters<dim> (ParameterHandler &); \
+  \
+  template \
+  void \
+  write_plugin_graph<dim> (std::ostream &); \
   \
   template \
   Interface<dim> * \

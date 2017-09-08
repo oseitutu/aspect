@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,16 +14,15 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
-#ifndef __aspect__model_diffusion_dislocation_h
-#define __aspect__model_diffusion_dislocation_h
+#ifndef _aspect_material_model_diffusion_dislocation_h
+#define _aspect_material_model_diffusion_dislocation_h
 
 #include <aspect/material_model/interface.h>
 #include <aspect/simulator_access.h>
-#include <deal.II/base/parameter_handler.h>
 
 namespace aspect
 {
@@ -81,65 +80,23 @@ namespace aspect
     {
       public:
 
-        typedef typename aspect::MaterialModel::Interface<dim>::MaterialModelInputs MaterialModelInputs;
-        typedef typename aspect::MaterialModel::Interface<dim>::MaterialModelOutputs MaterialModelOutputs;
-
-        virtual void evaluate(const MaterialModelInputs &in, MaterialModelOutputs &out) const;
-
-        /**
-         * Return true if the viscosity() function returns something that may
-         * depend on the variable identifies by the argument.
-         */
-        virtual bool
-        viscosity_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the density() function returns something that may
-         * depend on the variable identifies by the argument.
-         */
-        virtual bool
-        density_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the compressibility() function returns something
-         * that may depend on the variable identifies by the argument.
-         *
-         * This function must return false for all possible arguments if the
-         * is_compressible() function returns false.
-         */
-        virtual bool
-        compressibility_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the specific_heat() function returns something that
-         * may depend on the variable identifies by the argument.
-         */
-        virtual bool
-        specific_heat_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the thermal_conductivity() function returns
-         * something that may depend on the variable identifies by the
-         * argument.
-         */
-        virtual bool
-        thermal_conductivity_depends_on (const NonlinearDependence::Dependence dependence) const;
+        virtual void evaluate(const MaterialModel::MaterialModelInputs<dim> &in,
+                              MaterialModel::MaterialModelOutputs<dim> &out) const;
 
         /**
          * Return whether the model is compressible or not.  Incompressibility
          * does not necessarily imply that the density is constant; rather, it
          * may still depend on temperature or pressure. In the current
-         * context, compressibility means whether we should solve the continuity
-         * equation as $\nabla \cdot (\rho \mathbf u)=0$ (compressible Stokes)
-         * or as $\nabla \cdot \mathbf{u}=0$ (incompressible Stokes).
-        *
-        * This material model is incompressible.
+         * context, compressibility means whether we should solve the
+         * continuity equation as $\nabla \cdot (\rho \mathbf u)=0$
+         * (compressible Stokes) or as $\nabla \cdot \mathbf{u}=0$
+         * (incompressible Stokes).
+         *
+         * This material model is incompressible.
          */
         virtual bool is_compressible () const;
 
         virtual double reference_viscosity () const;
-
-        virtual double reference_density () const;
 
         static
         void
@@ -152,13 +109,23 @@ namespace aspect
       private:
 
         double reference_T;
+
+        /**
+         * Defining a minimum strain rate stabilizes the viscosity calculation,
+         * which involves a division by the strain rate. Units: $1/s$.
+         */
         double min_strain_rate;
         double min_visc;
         double max_visc;
         double veff_coefficient;
         double ref_visc;
+
+        double strain_rate_residual_threshold;
+        unsigned int stress_max_iteration_number;
+
         double thermal_diffusivity;
         double heat_capacity;
+        double grain_size;
 
         /**
          * From multicomponent material model: From a list of compositional
@@ -179,9 +146,9 @@ namespace aspect
          * Enumeration for selecting which viscosity averaging scheme to use.
          * Select between harmonic, arithmetic, geometric, and
          * maximum_composition. The max composition scheme simply uses the
-         * viscosity of whichever field has the highes volume fraction.
-        * For each quadrature point, averaging is conducted over the
-        * N compositional fields plus the background field.
+         * viscosity of whichever field has the highest volume fraction. For
+         * each quadrature point, averaging is conducted over the N
+         * compositional fields plus the background field.
          */
         enum averaging_scheme
         {
@@ -196,20 +163,23 @@ namespace aspect
                               const std::vector<double> &parameter_values,
                               const enum averaging_scheme &average_type) const;
 
-        std::vector<double> calculate_viscosities ( const std::vector<double> &volume_fractions,
-                                                    const double &pressure,
-                                                    const double &temperature,
-                                                    const SymmetricTensor<2,dim> &strain_rate) const;
+        std::vector<double>
+        calculate_isostrain_viscosities ( const std::vector<double> &volume_fractions,
+                                          const double &pressure,
+                                          const double &temperature,
+                                          const SymmetricTensor<2,dim> &strain_rate) const;
 
 
         std::vector<double> prefactors_diffusion;
+        std::vector<double> stress_exponents_diffusion;
+        std::vector<double> grain_size_exponents_diffusion;
         std::vector<double> activation_energies_diffusion;
         std::vector<double> activation_volumes_diffusion;
 
         std::vector<double> prefactors_dislocation;
+        std::vector<double> stress_exponents_dislocation;
         std::vector<double> activation_energies_dislocation;
         std::vector<double> activation_volumes_dislocation;
-        std::vector<double> stress_exponents_dislocation;
 
     };
 

@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,14 +14,15 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 
 #include <aspect/postprocess/heating_statistics.h>
-#include <aspect/simulator_access.h>
+#include <aspect/heating_model/interface.h>
+#include <aspect/adiabatic_conditions/interface.h>
 
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/fe/fe_values.h>
@@ -79,33 +80,32 @@ namespace aspect
           {
 
             fe_values.reinit (cell);
-            fe_values[this->introspection().extractors.temperature]
-            .get_function_values (this->get_solution(),
-                                  in.temperature);
-            fe_values[this->introspection().extractors.pressure]
-            .get_function_values (this->get_solution(),
-                                  in.pressure);
-            fe_values[this->introspection().extractors.velocities]
-            .get_function_values (this->get_solution(),
-                                  in.velocity);
-            fe_values[this->introspection().extractors.pressure]
-            .get_function_gradients (this->get_solution(),
-                                     in.pressure_gradient);
-            for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-              fe_values[this->introspection().extractors.compositional_fields[c]]
-              .get_function_values(this->get_solution(),
-                                   composition_values[c]);
-            for (unsigned int i=0; i<fe_values.n_quadrature_points; ++i)
+            in.reinit(fe_values, cell, this->introspection(), this->get_solution());
+
+            for (typename std::list<std_cxx11::shared_ptr<HeatingModel::Interface<dim> > >::const_iterator
+                 heating_model = heating_model_objects.begin();
+                 heating_model != heating_model_objects.end(); ++heating_model)
               {
-                for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-                  in.composition[i][c] = composition_values[c][i];
+                (*heating_model)->create_additional_material_model_outputs(out);
               }
 
-            fe_values[this->introspection().extractors.velocities].get_function_symmetric_gradients (this->get_solution(),
-                in.strain_rate);
-            in.position = fe_values.get_quadrature_points();
-
             this->get_material_model().evaluate(in, out);
+
+            if (this->get_parameters().formulation_temperature_equation
+                == Parameters<dim>::Formulation::TemperatureEquation::reference_density_profile)
+              {
+                // Overwrite the density by the reference density coming from the
+                // adiabatic conditions as required by the formulation
+                for (unsigned int q=0; q<n_q_points; ++q)
+                  out.densities[q] = this->get_adiabatic_conditions().density(in.position[q]);
+              }
+            else if (this->get_parameters().formulation_temperature_equation
+                     == Parameters<dim>::Formulation::TemperatureEquation::real_density)
+              {
+                // use real density
+              }
+            else
+              AssertThrow(false, ExcNotImplemented());
 
             for (unsigned int q=0; q<n_q_points; ++q)
               local_mass += out.densities[q] * fe_values.JxW(q);

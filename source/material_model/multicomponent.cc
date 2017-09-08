@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,38 +14,20 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/material_model/multicomponent.h>
 #include <aspect/simulator.h>
-#include <deal.II/base/parameter_handler.h>
+#include <aspect/utilities.h>
 
 #include <numeric>
 
-using namespace dealii;
 
 namespace aspect
 {
-  namespace
-  {
-    std::vector<double>
-    get_vector_double (const std::string &parameter, const unsigned int n_fields, ParameterHandler &prm)
-    {
-      std::vector<double> parameter_list;
-      parameter_list = Utilities::string_to_double(Utilities::split_string_list(prm.get (parameter)));
-      if (parameter_list.size() == 1)
-        parameter_list.resize(n_fields, parameter_list[0]);
-
-      AssertThrow(parameter_list.size() == n_fields,
-                  ExcMessage("Length of "+parameter+" list must be either one, or n_compositional_fields+1"));
-
-      return parameter_list;
-    }
-  }
-
   namespace MaterialModel
   {
     template <int dim>
@@ -55,25 +37,25 @@ namespace aspect
     {
       std::vector<double> volume_fractions( compositional_fields.size()+1);
 
-      //clip the compositional fields so they are between zero and one
+      // clip the compositional fields so they are between zero and one
       std::vector<double> x_comp = compositional_fields;
       for ( unsigned int i=0; i < x_comp.size(); ++i)
         x_comp[i] = std::min(std::max(x_comp[i], 0.0), 1.0);
 
-      //sum the compositional fields for normalization purposes
+      // sum the compositional fields for normalization purposes
       double sum_composition = 0.0;
       for ( unsigned int i=0; i < x_comp.size(); ++i)
         sum_composition += x_comp[i];
 
       if (sum_composition >= 1.0)
         {
-          volume_fractions[0] = 0.0;  //background mantle
+          volume_fractions[0] = 0.0;  // background mantle
           for ( unsigned int i=1; i <= x_comp.size(); ++i)
             volume_fractions[i] = x_comp[i-1]/sum_composition;
         }
       else
         {
-          volume_fractions[0] = 1.0 - sum_composition; //background mantle
+          volume_fractions[0] = 1.0 - sum_composition; // background mantle
           for ( unsigned int i=1; i <= x_comp.size(); ++i)
             volume_fractions[i] = x_comp[i-1];
         }
@@ -187,97 +169,8 @@ namespace aspect
     Multicomponent<dim>::
     reference_viscosity () const
     {
-      return viscosities[0]; //background
+      return viscosities[0]; // background
     }
-
-    template <int dim>
-    double
-    Multicomponent<dim>::
-    reference_density () const
-    {
-      return densities[0];  //background
-    }
-
-    template <int dim>
-    double
-    Multicomponent<dim>::
-    reference_thermal_expansion_coefficient () const
-    {
-      return thermal_expansivities[0]; //background
-    }
-
-    template <int dim>
-    double
-    Multicomponent<dim>::
-    reference_cp () const
-    {
-      return specific_heats[0]; //background
-    }
-
-    template <int dim>
-    double
-    Multicomponent<dim>::
-    reference_thermal_diffusivity () const
-    {
-      return thermal_conductivities[0] /( densities[0]* specific_heats[0] ); //background
-    }
-
-
-    template <int dim>
-    bool
-    Multicomponent<dim>::
-    viscosity_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      if (((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none))
-        return true;
-      else
-        return false;
-    }
-
-
-    template <int dim>
-    bool
-    Multicomponent<dim>::
-    density_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      if (((dependence & NonlinearDependence::temperature) != NonlinearDependence::none))
-        return true;
-      else if (((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none))
-        return true;
-      else
-        return false;
-    }
-
-    template <int dim>
-    bool
-    Multicomponent<dim>::
-    compressibility_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    Multicomponent<dim>::
-    specific_heat_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      if (((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none))
-        return true;
-      else
-        return false;
-    }
-
-    template <int dim>
-    bool
-    Multicomponent<dim>::
-    thermal_conductivity_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      if (((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none))
-        return true;
-      else
-        return false;
-    }
-
 
     template <int dim>
     bool
@@ -315,7 +208,7 @@ namespace aspect
                              "If only one value is given, then all use the same value. Units: $1/K$");
           prm.declare_entry ("Specific heats", "1250.",
                              Patterns::List(Patterns::Double(0)),
-                             "List of specific heats for background mantle and compositional fields,"
+                             "List of specific heats $C_p$ for background mantle and compositional fields,"
                              "for a total of N+1 values, where N is the number of compositional fields."
                              "If only one value is given, then all use the same value. Units: $J /kg /K$");
           prm.declare_entry ("Thermal conductivities", "4.7",
@@ -339,8 +232,8 @@ namespace aspect
     void
     Multicomponent<dim>::parse_parameters (ParameterHandler &prm)
     {
-      //not pretty, but we need to get the number of compositional fields before
-      //simulatoraccess has been initialized here...
+      // not pretty, but we need to get the number of compositional fields before
+      // simulator access has been initialized here...
       unsigned int n_foreground_fields;
       prm.enter_subsection ("Compositional fields");
       {
@@ -369,16 +262,33 @@ namespace aspect
             AssertThrow(false, ExcMessage("Not a valid viscosity averaging scheme"));
 
           // Parse multicomponent properties
-          densities=get_vector_double("Densities", n_fields, prm);
-          viscosities=get_vector_double("Viscosities", n_fields, prm);
-          thermal_conductivities=get_vector_double("Thermal conductivities", n_fields, prm);
-          thermal_expansivities=get_vector_double("Thermal expansivities", n_fields, prm);
-          specific_heats=get_vector_double("Specific heats", n_fields, prm);
+          densities = Utilities::possibly_extend_from_1_to_N (Utilities::string_to_double(Utilities::split_string_list(prm.get("Densities"))),
+                                                              n_fields,
+                                                              "Densities");
+          viscosities = Utilities::possibly_extend_from_1_to_N (Utilities::string_to_double(Utilities::split_string_list(prm.get("Viscosities"))),
+                                                                n_fields,
+                                                                "Viscosities");
+          thermal_conductivities = Utilities::possibly_extend_from_1_to_N (Utilities::string_to_double(Utilities::split_string_list(prm.get("Thermal conductivities"))),
+                                                                           n_fields,
+                                                                           "Thermal conductivities");
+          thermal_expansivities = Utilities::possibly_extend_from_1_to_N (Utilities::string_to_double(Utilities::split_string_list(prm.get("Thermal expansivities"))),
+                                                                          n_fields,
+                                                                          "Thermal expansivities");
+          specific_heats = Utilities::possibly_extend_from_1_to_N (Utilities::string_to_double(Utilities::split_string_list(prm.get("Specific heats"))),
+                                                                   n_fields,
+                                                                   "Specific heats");
 
         }
         prm.leave_subsection();
       }
       prm.leave_subsection();
+
+      // Declare dependencies on solution variables
+      this->model_dependence.viscosity = NonlinearDependence::compositional_fields;
+      this->model_dependence.density = NonlinearDependence::temperature | NonlinearDependence::compositional_fields;
+      this->model_dependence.compressibility = NonlinearDependence::none;
+      this->model_dependence.specific_heat = NonlinearDependence::compositional_fields;
+      this->model_dependence.thermal_conductivity = NonlinearDependence::compositional_fields;
     }
   }
 }
@@ -393,7 +303,7 @@ namespace aspect
                                    "This model is for use with an arbitrary number of compositional fields, where each field"
                                    " represents a rock type which can have completely different properties from the others."
                                    " However, each rock type itself has constant material properties.  The value of the "
-                                   " compositional field is interpreed as a volume fraction. If the sum of the fields is"
+                                   " compositional field is interpreted as a volume fraction. If the sum of the fields is"
                                    " greater than one, they are renormalized.  If it is less than one, material properties "
                                    " for ``background mantle'' make up the rest. When more than one field is present, the"
                                    " material properties are averaged arithmetically.  An exception is the viscosity,"

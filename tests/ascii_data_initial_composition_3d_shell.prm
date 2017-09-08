@@ -18,7 +18,7 @@ subsection Geometry model
 end
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = harmonic perturbation
   subsection Harmonic perturbation
     set Magnitude = 30
@@ -28,7 +28,7 @@ end
 
 
 subsection Boundary temperature model
-  set Model name = spherical constant
+  set List of model names = spherical constant
   subsection Spherical constant
     set Inner temperature = 3000
     set Outer temperature = 273
@@ -44,8 +44,6 @@ subsection Model settings
 
   set Tangential velocity boundary indicators = 
 
-  set Include adiabatic heating               = false
-  set Include shear heating                   = false
 end
 
 subsection Boundary velocity model
@@ -60,10 +58,10 @@ subsection Compositional fields
 end
 
 
-subsection Compositional initial conditions
+subsection Initial composition model
   set Model name = ascii data
   subsection Ascii data model
-    set Data directory       = $ASPECT_SOURCE_DIR/data/compositional-initial-conditions/ascii-data/test/
+    set Data directory       = $ASPECT_SOURCE_DIR/data/initial-composition/ascii-data/test/
     set Data file name       = shell_3d.txt
   end
 end

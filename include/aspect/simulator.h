@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,20 +14,22 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__simulator_h
-#define __aspect__simulator_h
+#ifndef _aspect_simulator_h
+#define _aspect_simulator_h
 
 #include <deal.II/base/timer.h>
 #include <deal.II/base/parameter_handler.h>
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/symmetric_tensor.h>
 
-#include <deal.II/lac/trilinos_block_vector.h>
+DEAL_II_DISABLE_EXTRA_DIAGNOSTICS
+
+#include <deal.II/lac/trilinos_parallel_block_vector.h>
 #include <deal.II/lac/trilinos_block_sparse_matrix.h>
 #include <deal.II/lac/trilinos_precondition.h>
 
@@ -36,23 +38,28 @@
 #include <deal.II/dofs/dof_handler.h>
 
 #include <deal.II/fe/fe_system.h>
-#include <deal.II/fe/mapping_q.h>
+#include <deal.II/fe/mapping.h>
 #include <deal.II/base/tensor_function.h>
+
+DEAL_II_ENABLE_EXTRA_DIAGNOSTICS
 
 #include <aspect/global.h>
 #include <aspect/simulator_access.h>
+#include <aspect/lateral_averaging.h>
 #include <aspect/simulator_signals.h>
 #include <aspect/material_model/interface.h>
 #include <aspect/heating_model/interface.h>
+#include <aspect/geometry_model/initial_topography_model/interface.h>
 #include <aspect/geometry_model/interface.h>
 #include <aspect/gravity_model/interface.h>
 #include <aspect/boundary_temperature/interface.h>
 #include <aspect/boundary_composition/interface.h>
-#include <aspect/initial_conditions/interface.h>
-#include <aspect/compositional_initial_conditions/interface.h>
+#include <aspect/initial_temperature/interface.h>
+#include <aspect/initial_composition/interface.h>
 #include <aspect/prescribed_stokes_solution/interface.h>
-#include <aspect/velocity_boundary_conditions/interface.h>
-#include <aspect/traction_boundary_conditions/interface.h>
+#include <aspect/boundary_velocity/interface.h>
+#include <aspect/boundary_fluid_pressure/interface.h>
+#include <aspect/boundary_traction/interface.h>
 #include <aspect/mesh_refinement/interface.h>
 #include <aspect/termination_criteria/interface.h>
 #include <aspect/postprocess/interface.h>
@@ -60,11 +67,17 @@
 
 #include <boost/iostreams/tee.hpp>
 #include <boost/iostreams/stream.hpp>
-
+#include <deal.II/base/std_cxx11/shared_ptr.h>
 
 namespace aspect
 {
   using namespace dealii;
+
+  template <int dim>
+  class MeltHandler;
+
+  template <int dim>
+  class FreeSurfaceHandler;
 
   namespace internal
   {
@@ -82,8 +95,13 @@ namespace aspect
         template <int dim>      struct StokesPreconditioner;
         template <int dim>      struct StokesSystem;
         template <int dim>      struct AdvectionSystem;
-
       }
+
+      namespace Assemblers
+      {
+        template <int dim>      class AssemblerBase;
+      }
+      template <int dim>      struct AssemblerLists;
     }
   }
 
@@ -98,7 +116,6 @@ namespace aspect
   class Simulator
   {
     public:
-
       /**
        * Constructor.
        *
@@ -145,6 +162,19 @@ namespace aspect
        */
       void run ();
 
+      /**
+       * Write a connection graph of all of the plugins we know about, in the
+       * format that the programs dot and neato understand. This allows for a
+       * visualization of how all of the plugins that ASPECT knows about are
+       * interconnected, and connect to other parts of the ASPECT code.
+       *
+       * This function is implemented in
+       * <code>source/simulator/helper_functions.cc</code>.
+       *
+       * @param output_stream The stream to write the output to.
+       */
+      void
+      write_plugin_graph (std::ostream &output_stream) const;
 
       /**
        * Import Nonlinear Solver type.
@@ -156,8 +186,6 @@ namespace aspect
        */
       typedef typename Parameters<dim>::NullspaceRemoval NullspaceRemoval;
 
-
-    private:
 
       /**
        * A structure that is used as an argument to functions that can work on
@@ -227,6 +255,20 @@ namespace aspect
         is_temperature () const;
 
         /**
+         * Return whether this object refers to a field discretized by
+         * discontinuous finite elements.
+         */
+        bool
+        is_discontinuous (const Introspection<dim> &introspection) const;
+
+        /**
+         * Return the method that is used to solve the advection of this field
+         * (i.e. 'fem_field', 'particles').
+         */
+        typename Parameters<dim>::AdvectionFieldMethod::Kind
+        advection_method (const Introspection<dim> &introspection) const;
+
+        /**
          * Look up the component index for this temperature or compositional
          * field. See Introspection::component_indices for more information.
          */
@@ -239,12 +281,37 @@ namespace aspect
         unsigned int block_index(const Introspection<dim> &introspection) const;
 
         /**
+         * Returns an index that runs from 0 (temperature field) to n (nth
+         * compositional field), and uniquely identifies the current advection
+         * field among the list of all advection fields. Can be used to index
+         * vectors that contain entries for all advection fields.
+         */
+        unsigned int field_index() const;
+
+        /**
          * Look up the base element within the larger composite finite element
          * we used for everything, for this temperature or compositional field
          * See Introspection::base_elements for more information.
          */
         unsigned int base_element(const Introspection<dim> &introspection) const;
+
+        /**
+         * Return the FEValues scalar extractor for this temperature
+         * or compositional field.
+         * This function is implemented in
+         * <code>source/simulator/helper_functions.cc</code>.
+         */
+        FEValuesExtractors::Scalar scalar_extractor(const Introspection<dim> &introspection) const;
+
+        /**
+         * Look up the polynomial degree order for this temperature or compositional
+         * field. See Introspection::polynomial_degree for more information.
+         */
+        unsigned int polynomial_degree(const Introspection<dim> &introspection) const;
       };
+
+
+    private:
 
 
       /**
@@ -398,7 +465,7 @@ namespace aspect
       void assemble_advection_system (const AdvectionField &advection_field);
 
       /**
-       * Solve one block of the the temperature/composition linear system.
+       * Solve one block of the temperature/composition linear system.
        * Return the initial nonlinear residual, i.e., if the linear system to
        * be solved is $Ax=b$, then return $\|Ax_0-b\|$ where $x_0$ is the
        * initial guess for the solution variable and is taken from the
@@ -408,6 +475,11 @@ namespace aspect
        * <code>source/simulator/solver.cc</code>.
        */
       double solve_advection (const AdvectionField &advection_field);
+
+      /**
+       * Interpolate a particular particle property to the solution field.
+       */
+      void interpolate_particle_properties (const AdvectionField &advection_field);
 
       /**
        * Solve the Stokes linear system. Return the initial nonlinear
@@ -531,9 +603,72 @@ namespace aspect
        */
 
       /**
-       * @name Functions used in the assembly of linear systems
+       * @name Functions, classes, and variables used in the assembly of linear systems
        * @{
        */
+
+      /**
+       * A member variable that stores, for the current simulation, what
+       * functions need to be called in order to assemble linear systems,
+       * matrices, and right hand side vectors.
+       *
+       * One would probably want this variable to just be a member of type
+       * internal::Assembly::AssemblerLists<dim>, but this requires that
+       * this type is declared in the current scope, and that would require
+       * including <assembly.h> which we don't want because it's big.
+       * Consequently, we just store a pointer to such an object, and create
+       * the object pointed to at the top of set_assemblers().
+       */
+      std_cxx11::unique_ptr<internal::Assembly::AssemblerLists<dim> > assemblers;
+
+      /**
+       * A collection of objects that implement member functions that may
+       * appear in the assembler signal lists. What the objects do is not
+       * actually important, but individual assembler objects may encapsulate
+       * data that is used by concrete assemblers.
+       *
+       * The objects pointed to by this vector are created in
+       * set_assemblers(), and are later destroyed by the destructor
+       * of the current class.
+       */
+      std::vector<std_cxx11::shared_ptr<internal::Assembly::Assemblers::AssemblerBase<dim> > > assembler_objects;
+
+      /**
+       * Material models, through functions derived from
+       * MaterialModel::Interface::evaluate(), put their computed material
+       * parameters into a structure of type MaterialModel::MaterialModelOutputs.
+       * By default, material models will compute those parameters that
+       * correspond to the member variables of that structure. However,
+       * there are situations where parts of the simulator need additional
+       * pieces of information; a typical example would be the use of a
+       * Newton scheme that also requires the computation of <i>derivatives</i>
+       * of material parameters with respect to pressure, temperature, and
+       * possibly other variables.
+       *
+       * The computation of such additional information is controlled by
+       * the presence of a collection of pointers in
+       * MaterialModel::MaterialModelOutputs that point to additional
+       * objects. Whether or not one needs these additional objects depends
+       * on what linear system is being assembled, or what postprocessing
+       * wants to compute. For the purpose of assembly, the current
+       * function creates the additional objects (such as the one that stores
+       * derivatives) and adds pointers to them to the collection, based on
+       * what assemblers are selected. It does so by calling the
+       * internal::Assemblers::AssemblerBase::create_additional_material_model_outputs()
+       * functions from each object in Simulator::assembler_objects.
+       */
+      void create_additional_material_model_outputs(MaterialModel::MaterialModelOutputs<dim> &) const;
+
+      /**
+       * Determine, based on the run-time parameters of the current simulation,
+       * which functions need to be called in order to assemble linear systems,
+       * matrices, and right hand side vectors.
+       *
+       * This function is implemented in
+       * <code>source/simulator/assembly.cc</code>.
+       */
+      void set_assemblers ();
+
       /**
        * Initiate the assembly of the preconditioner for the Stokes system.
        *
@@ -588,6 +723,18 @@ namespace aspect
 
       /**
        * Compute the integrals for one advection matrix and right hand side on
+       * the faces of a single cell.
+       *
+       * This function is implemented in
+       * <code>source/simulator/assembly.cc</code>.
+       */
+      void
+      local_assemble_advection_face_terms(const AdvectionField &advection_field,
+                                          const typename DoFHandler<dim>::active_cell_iterator &cell,
+                                          internal::Assembly::Scratch::AdvectionSystem<dim> &scratch,
+                                          internal::Assembly::CopyData::AdvectionSystem<dim> &data);
+      /**
+       * Compute the integrals for one advection matrix and right hand side on
        * a single cell.
        *
        * This function is implemented in
@@ -595,13 +742,10 @@ namespace aspect
        */
       void
       local_assemble_advection_system (const AdvectionField &advection_field,
-                                       const std::pair<double,double> global_field_range,
-                                       const double                   global_max_velocity,
-                                       const double                   global_entropy_variation,
+                                       const Vector<double>           &viscosity_per_cell,
                                        const typename DoFHandler<dim>::active_cell_iterator &cell,
                                        internal::Assembly::Scratch::AdvectionSystem<dim>  &scratch,
                                        internal::Assembly::CopyData::AdvectionSystem<dim> &data);
-
 
       /**
        * Copy the contribution to the advection system from a single cell into
@@ -611,7 +755,8 @@ namespace aspect
        * <code>source/simulator/assembly.cc</code>.
        */
       void
-      copy_local_to_global_advection_system (const internal::Assembly::CopyData::AdvectionSystem<dim> &data);
+      copy_local_to_global_advection_system (const AdvectionField &advection_field,
+                                             const internal::Assembly::CopyData::AdvectionSystem<dim> &data);
 
       /**
        * @}
@@ -646,125 +791,9 @@ namespace aspect
        * @param advection_field Determines whether this variable should select
        * the temperature field or a compositional field.
        */
-      void get_artificial_viscosity (Vector<float> &viscosity_per_cell,
+      template <typename T>
+      void get_artificial_viscosity (Vector<T> &viscosity_per_cell,
                                      const AdvectionField &advection_field) const;
-
-      /**
-       * Internal routine to compute the depth average of a certain quantitiy.
-       *
-       * The functor @p fctr must be an object of a user defined type that can
-       * be arbitrary but has to satisfy certain requirements. In essence,
-       * this class type needs to implement the following interface of member
-       * functions:
-       * @code
-       * template <int dim>
-       * class Functor
-       * {
-       *   public:
-       *     // operator() will have @p in and @p out filled out if @p true
-       *     bool need_material_properties() const;
-       *
-       *     // called once at the beginning with the number of quadrature points
-       *     void setup(const unsigned int q_points);
-       *
-       *     // fill @p output for each quadrature point
-       *     void operator()(const MaterialModel::MaterialModelInputs<dim> &in,
-       *        const MaterialModel::MaterialModelOutputs<dim> &out,
-       *        FEValues<dim> &fe_values,
-       *        const LinearAlgebra::BlockVector &solution,
-       *        std::vector<double> &output);
-       * };
-       * @endcode
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       * @param fctr Instance of a class satisfying the signature above.
-       */
-      template<class FUNCTOR>
-      void compute_depth_average(std::vector<double> &values,
-                                 FUNCTOR &fctr) const;
-
-      /**
-       * Compute a depth average of the current temperature/composition. The
-       * function fills a vector that contains average
-       * temperatures/compositions over slices of the domain of same depth.
-       * The function resizes the output vector to match the number of depth
-       * slices.
-       *
-       * This function is implemented in
-       * <code>source/simulator/helper_functions.cc</code>.
-       *
-       * @param advection_field Temperature or compositional field to average.
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void compute_depth_average_field(const AdvectionField &advection_field,
-                                       std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the current viscosity. The function fills
-       * a vector that contains average viscosities over slices of the domain
-       * of same depth. The function resizes the output vector to match the
-       * number of depth slices.
-       *
-       * This function is implemented in
-       * <code>source/simulator/helper_functions.cc</code>.
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void compute_depth_average_viscosity(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the current velocity magnitude.
-       *
-       * This function is implemented in
-       * <code>source/simulator/helper_functions.cc</code>.
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void compute_depth_average_velocity_magnitude(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the current sinking velocity.
-       *
-       * This function is implemented in
-       * <code>source/simulator/helper_functions.cc</code>.
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void compute_depth_average_sinking_velocity(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the seismic shear wave speed, Vs
-       *
-       * This function is implemented in
-       * <code>source/simulator/helper_functions.cc</code>.
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void compute_depth_average_Vs(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the seismic pressure wave speed, Vp
-       *
-       * This function is implemented in
-       * <code>source/simulator/helper_functions.cc</code>.
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void compute_depth_average_Vp(std::vector<double> &values) const;
 
       /**
        * Compute the seismic shear wave speed, Vs anomaly per element. we
@@ -796,28 +825,129 @@ namespace aspect
       void compute_Vp_anomaly(Vector<float> &values) const;
 
       /**
-       * Adjust the pressure variable (which is only determined up to a
-       * constant) by adding a constant to it in such a way that the pressure
-       * on the surface has a known average value. Whether a face is part of
-       * the surface is determined by asking whether its depth of its midpoint
-       * (as determined by the geometry model) is less than
+       * Adjust the pressure variable (which is only determined up to
+       * a constant by the equations, though its value may enter
+       * traction boundary conditions) by adding a constant to it in
+       * such a way that the pressure on the surface or within the
+       * entire volume has a known average value. The point of this
+       * function is that the pressure that results from solving the
+       * linear system may not coincide with what we think of as the
+       * "physical pressure"; in particular, we typically think of the
+       * pressure as zero (on average) along the surface because it is
+       * the sum of the hydrostatic and dynamic pressure, where the
+       * former is thought of as zero along the surface. This function
+       * therefore converts from the "mathematical" pressure to the
+       * "physical" pressure so that all following postprocessing
+       * steps can use the latter.
+       *
+       * In the case of the surface average, whether a face is part of
+       * the surface is determined by asking whether its depth of its
+       * midpoint (as determined by the geometry model) is less than
        * 1/3*1/sqrt(dim-1)*diameter of the face. For reasonably curved
-       * boundaries, this rules out side faces that are perpendicular ot the
-       * surface boundary but includes those faces that are along the boundary
-       * even if the real boundary is curved.
+       * boundaries, this rules out side faces that are perpendicular
+       * to the surface boundary but includes those faces that are
+       * along the boundary even if the real boundary is curved.
+       *
+       * Whether the pressure should be normalized based on the
+       * surface or volume average is decided by a parameter in the
+       * input file.
+       *
+       * @note This function is called after setting the initial
+       * pressure field in compute_initial_pressure_field() and at the end
+       * of solve_stokes(). This makes sense because these are exactly the
+       * places where the pressure is modified or re-computed.
+       *
+       * @return This function returns the pressure adjustment by value.
+       * This is so that its negative can later be used again in
+       * denormalize_pressure().
        *
        * This function is implemented in
        * <code>source/simulator/helper_functions.cc</code>.
        */
-      void normalize_pressure(LinearAlgebra::BlockVector &vector);
+      double normalize_pressure(LinearAlgebra::BlockVector &vector) const;
 
       /**
-       * Invert the action of the function above.
+       * Invert the action of the normalize_pressure() function above. This
+       * means that we move from a pressure that satisfies the pressure
+       * normalization (e.g., has a zero average pressure, or a zero average
+       * surface pressure) to one that does not actually satisfy this
+       * normalization, and this doesn't seem to make sense because we are
+       * not interested in such a pressure.
+       *
+       * Indeed, this function is only called at the very beginning of
+       * solve_stokes() before we compute the initial (linear) residual
+       * of the linear system $Ax=b$ that corresponds to the Stokes system,
+       * where $x$ is the variable for which the pressure is adjusted
+       * back to the "wrong" form. Because stokes_system() calls
+       * normalize_pressure() at the end of its operations, no such
+       * "wrong" pressure ever escapes the realm of solve_stokes(). The
+       * "wrong" pressure is then used for two purposes in that function:
+       * (i) To compute the initial Stokes residual, which makes sense
+       * because it can only be zero (if we solved the same linear system
+       * twice) if we re-use the exact same pressure as we got from the
+       * previous solve -- i.e., before we called normalize_pressure()
+       * at the end of the solve. (ii) To initialize the solution vector
+       * before calling the GMRES solver, which also makes sense because
+       * the best guess vector for GMRES is the one that had previously
+       * come out of GMRES, namely the one on which we later called
+       * normalize_pressure().
+       *
+       * This function modifies @p vector in-place. In some cases, we need
+       * locally_relevant values of the pressure. To avoid creating a new vector
+       * and transferring data, this function uses a second vector with relevant
+       * dofs (@p relevant_vector) for accessing these pressure values. Both
+       * @p vector and @p relevant_vector are expected to already contain
+       * the correct pressure values.
+       *
+       * @note The adjustment made in this function is done using the
+       * negative of the @p pressure_adjustment function argument that
+       * would typically have been computed and returned by the
+       * normalize_pressure() function. This value is typically stored in
+       * the member variable @p last_pressure_normalization_adjustment,
+       * but the current function doesn't read this variable but instead
+       * gets the adjustment variable from the given argument.
        *
        * This function is implemented in
        * <code>source/simulator/helper_functions.cc</code>.
        */
-      void denormalize_pressure(LinearAlgebra::BlockVector &vector);
+      void denormalize_pressure(const double                      pressure_adjustment,
+                                LinearAlgebra::BlockVector       &vector,
+                                const LinearAlgebra::BlockVector &relevant_vector) const;
+
+      /**
+       * Apply the bound preserving limiter to the discontinuous Galerkin solutions:
+       * i.e., given two fixed upper and lower bound [min, max], after applying the limiter,
+       * the discontinuous Galerkin solution will stay in the prescribed bounds.
+       *
+       * This function is implemented in
+       * <code>source/simulator/helper_functions.cc</code>.
+       */
+      void apply_limiter_to_dg_solutions (const AdvectionField &advection_field);
+
+
+      /**
+       * Compute the reactions in case of operator splitting:
+       * Using the current solution vector, this function makes a number of time
+       * steps determined by the size of the reaction time step, and solves a
+       * system of coupled ordinary differential equations for the reactions between
+       * compositional fields and temperature in each of them. To do that, is uses
+       * the reaction rates outputs from the material and heating models used in
+       * the computation. The solution vector is then updated with the new values
+       * of temperature and composition after the reactions.
+       *
+       * As the ordinary differential equation in any given point is independent
+       * from the solution at all other points, we do not have to assemble a matrix,
+       * but just need to loop over all node locations for the temperature and
+       * compositional fields and compute the update to the solution.
+       *
+       * The function also updates the old solution vectors with the reaction update
+       * so that the advection time stepping scheme will have the correct field terms
+       * for the right-hand side when assembling the advection system.
+       *
+       * This function is implemented in
+       * <code>source/simulator/helper_functions.cc</code>.
+       */
+      void compute_reactions ();
 
 
       /**
@@ -839,7 +969,7 @@ namespace aspect
        * This method will add a zero Dirichlet constraint for the first
        * velocity unknown in the domain for each velocity component, which is
        * later being processed for translational or linear momentum removal.
-       * This avoids breakdowns of the linear solvers that otherwise occured
+       * This avoids breakdowns of the linear solvers that otherwise occurred
        * in some instances.
        *
        * @note: Rotational modes are currently not handled and don't appear to
@@ -921,7 +1051,7 @@ namespace aspect
                                     const AdvectionField &advection_field) const;
 
       /**
-       * Compute the minimal and maximal temperature througout the domain from
+       * Compute the minimal and maximal temperature throughout the domain from
        * a solution vector extrapolated from the previous time steps. This is
        * needed to compute the artificial diffusion stabilization terms.
        *
@@ -932,17 +1062,64 @@ namespace aspect
       get_extrapolated_advection_field_range (const AdvectionField &advection_field) const;
 
       /**
-       * Compute the size of the next time step from the mesh size and the
-       * velocity on each cell. The computed time step has to satisfy the CFL
-       * number chosen in the input parameter file on each cell of the mesh.
-       * If specified in the parameter file, the time step will be the minimum
-       * of the convection *and* conduction time steps. Also returns whether
-       * the timestep is dominated by convection (true) or conduction (false).
+       * Check if timing output should be written in this timestep, and if
+       * so write it.
+       *
+       * This function is implemented in
+       * <code>source/simulator/helper_functions.cc</code>.
+       * */
+      void maybe_write_timing_output () const;
+
+      /**
+       * Check if a checkpoint should be written in this timestep. Is so create
+       * one. Returns whether a checkpoint was written.
        *
        * This function is implemented in
        * <code>source/simulator/helper_functions.cc</code>.
        */
-      std::pair<double,bool> compute_time_step () const;
+      bool maybe_write_checkpoint (const time_t last_checkpoint_time,
+                                   const std::pair<bool,bool> termination_output);
+
+      /**
+       * Check if we should do an initial refinement cycle in this timestep.
+       * This will only be checked in timestep 0, afterwards the variable
+       * pre_refinement_step variable is invalidated, and this function will
+       * return without doing refinement.
+       * An initial refinement cycle is different from a regular one,
+       * because time is not increased. Instead the same timestep is solved
+       * using the new mesh.
+       * Therefore, only output timing information and postprocessor output
+       * if required in the input file. But always output statistics (to have
+       * a history of the number of cells in the statistics file).
+       * This function returns whether an initial refinement was done.
+       *
+       * This function is implemented in
+       * <code>source/simulator/helper_functions.cc</code>.
+       */
+      bool maybe_do_initial_refinement (const unsigned int max_refinement_level);
+
+      /**
+       * Check if refinement is requested in this timestep. If so: Refine mesh.
+       * The @p max_refinement_level might be increased from this time on
+       * if this is an additional refinement cycle.
+       *
+       * This function is implemented in
+       * <code>source/simulator/helper_functions.cc</code>.
+       */
+      void maybe_refine_mesh (const double new_time_step,
+                              unsigned int &max_refinement_level);
+
+      /**
+       * Compute the size of the next time step from the mesh size and the
+       * velocity on each cell. The computed time step has to satisfy the CFL
+       * number chosen in the input parameter file on each cell of the mesh.
+       * If specified in the parameter file, the time step will be the minimum
+       * of the convection *and* conduction time steps.
+       *
+       * This function is implemented in
+       * <code>source/simulator/helper_functions.cc</code>.
+       */
+      double compute_time_step () const;
 
       /**
        * Compute the artificial diffusion coefficient value on a cell given
@@ -1007,7 +1184,7 @@ namespace aspect
        */
       void
       compute_material_model_input_values (const LinearAlgebra::BlockVector                            &input_solution,
-                                           const FEValues<dim,dim>                                     &input_finite_element_values,
+                                           const FEValuesBase<dim,dim>                                 &input_finite_element_values,
                                            const typename DoFHandler<dim>::active_cell_iterator        &cell,
                                            const bool                                                   compute_strainrate,
                                            MaterialModel::MaterialModelInputs<dim> &material_model_inputs) const;
@@ -1031,14 +1208,16 @@ namespace aspect
       stokes_matrix_depends_on_solution () const;
 
       /**
-       * Generate and output some statistics like timing information and
-       * memory consumption. Whether this function does anything or not is
-       * controlled through the variable aspect::output_parallel_statistics.
-       *
-       * This function is implemented in
-       * <code>source/simulator/helper_functions.cc</code>.
+       * This function checks that the user-selected formulations of the
+       * equations are consistent with the other inputs. If an incorrect
+       * selection is detected it throws an exception. It for example assures that
+       * correct heating terms are selected, and the material model supports
+       * the selection of the mass conservation formulation (e.g. incompressible)).
+       * If the parameter 'parameters.formulation' is set to 'custom'
+       * it only ensures very basic consistency.
        */
-      void output_program_stats();
+      void
+      check_consistency_of_formulation ();
 
       /**
        * This function is called at the end of each time step and writes the
@@ -1064,6 +1243,7 @@ namespace aspect
        */
       double
       compute_initial_stokes_residual();
+
       /**
        * @}
        */
@@ -1074,8 +1254,18 @@ namespace aspect
        * @{
        */
       Parameters<dim>                     parameters;
-      Introspection<dim>                  introspection;
+
+      /**
+       * Shared pointer for an instance of the MeltHandler. This way,
+       * if we do not need the machinery for doing melt stuff, we do
+       * not even allocate it.
+       */
+      std_cxx11::shared_ptr<MeltHandler<dim> > melt_handler;
+
       SimulatorSignals<dim>               signals;
+      const IntermediaryConstructorAction post_signal_creation;
+      Introspection<dim>                  introspection;
+
 
       MPI_Comm                            mpi_communicator;
 
@@ -1108,8 +1298,7 @@ namespace aspect
        */
       TableHandler                        statistics;
 
-      Postprocess::Manager<dim>           postprocess_manager;
-      TimerOutput                         computing_timer;
+      mutable TimerOutput                 computing_timer;
 
       /**
        * In output_statistics(), where we output the statistics object above,
@@ -1127,18 +1316,19 @@ namespace aspect
        * @name Variables that describe the physical setup of the problem
        * @{
        */
-      const std::auto_ptr<GeometryModel::Interface<dim> >            geometry_model;
-      const IntermediaryConstructorAction                            post_geometry_model_creation_action;
-      const std::auto_ptr<MaterialModel::Interface<dim> >            material_model;
-      const std::auto_ptr<GravityModel::Interface<dim> >             gravity_model;
-      const std::auto_ptr<BoundaryTemperature::Interface<dim> >      boundary_temperature;
-      const std::auto_ptr<BoundaryComposition::Interface<dim> >      boundary_composition;
-      const std::auto_ptr<InitialConditions::Interface<dim> >        initial_conditions;
-      const std::auto_ptr<PrescribedStokesSolution::Interface<dim> >        prescribed_stokes_solution;
-      const std::auto_ptr<CompositionalInitialConditions::Interface<dim> > compositional_initial_conditions;
-      const std::auto_ptr<AdiabaticConditions::Interface<dim> >      adiabatic_conditions;
-      std::map<types::boundary_id,std_cxx11::shared_ptr<VelocityBoundaryConditions::Interface<dim> > > velocity_boundary_conditions;
-      std::map<types::boundary_id,std_cxx11::shared_ptr<TractionBoundaryConditions::Interface<dim> > > traction_boundary_conditions;
+      const std_cxx11::unique_ptr<InitialTopographyModel::Interface<dim> >    initial_topography_model;
+      const std_cxx11::unique_ptr<GeometryModel::Interface<dim> >             geometry_model;
+      const IntermediaryConstructorAction                                     post_geometry_model_creation_action;
+      const std_cxx11::unique_ptr<MaterialModel::Interface<dim> >             material_model;
+      const std_cxx11::unique_ptr<GravityModel::Interface<dim> >              gravity_model;
+      BoundaryTemperature::Manager<dim>                                       boundary_temperature_manager;
+      const std_cxx11::unique_ptr<BoundaryComposition::Interface<dim> >       boundary_composition;
+      const std_cxx11::unique_ptr<PrescribedStokesSolution::Interface<dim> >  prescribed_stokes_solution;
+      InitialComposition::Manager<dim>                                        initial_composition_manager;
+      InitialTemperature::Manager<dim>                                        initial_temperature_manager;
+      const std_cxx11::unique_ptr<AdiabaticConditions::Interface<dim> >       adiabatic_conditions;
+      std::map<types::boundary_id,std_cxx11::shared_ptr<BoundaryVelocity::Interface<dim> > > boundary_velocity;
+      std::map<types::boundary_id,std_cxx11::shared_ptr<BoundaryTraction::Interface<dim> > > boundary_traction;
 
       /**
        * @}
@@ -1151,6 +1341,8 @@ namespace aspect
       double                                                    time_step;
       double                                                    old_time_step;
       unsigned int                                              timestep_number;
+      unsigned int                                              pre_refinement_step;
+      unsigned int                                              nonlinear_iteration;
       /**
        * @}
        */
@@ -1165,6 +1357,15 @@ namespace aspect
        */
 
       /**
+       * @name Variables for doing lateral averaging
+       * @{
+       */
+      LateralAveraging<dim>                                     lateral_averaging;
+      /**
+       * @}
+       */
+
+      /**
        * @name Variables that describe the spatial discretization
        * @{
        */
@@ -1174,8 +1375,17 @@ namespace aspect
 
       MeshRefinement::Manager<dim>                              mesh_refinement_manager;
       HeatingModel::Manager<dim>                                heating_model_manager;
+      Postprocess::Manager<dim>                                 postprocess_manager;
 
-      const MappingQ<dim>                                       mapping;
+      /**
+       * Pointer to the Mapping object used by the finite elements when
+       * going from the reference cell to the cell in the computational
+       * domain. We use a pointer since different mapping objects may
+       * be useful. In particular, when the mesh is deformable we use
+       * a MappingQ1Eulerian object to describe the mesh deformation,
+       * swapping it in for the original MappingQ or MappingCartesian object.
+       */
+      std_cxx11::unique_ptr<Mapping<dim> >                      mapping;
 
       const FESystem<dim>                                       finite_element;
 
@@ -1196,10 +1406,10 @@ namespace aspect
       ConstraintMatrix                                          current_constraints;
 
       /**
-       * The latest correction computed by normalize_pressure(). We store this
-       * so we can undo the correction in denormalize_pressure().
+       * A place to store the latest correction computed by normalize_pressure().
+       * We store this so we can undo the correction in denormalize_pressure().
        */
-      double                                                    pressure_adjustment;
+      double                                                    last_pressure_normalization_adjustment;
 
       /**
        * Scaling factor for the pressure as explained in the
@@ -1246,208 +1456,28 @@ namespace aspect
 //TODO: use n_compositional_field separate preconditioners
       std_cxx11::shared_ptr<LinearAlgebra::PreconditionILU>     C_preconditioner;
 
+      bool                                                      rebuild_sparsity_and_matrices;
       bool                                                      rebuild_stokes_matrix;
+      bool                                                      assemble_newton_stokes_matrix;
+      bool                                                      assemble_newton_stokes_system;
       bool                                                      rebuild_stokes_preconditioner;
 
       /**
        * @}
        */
 
-      /**
-       * A member class that isolates the functions and variables that deal
-       * with the free surface implementation.  If there are no free surface
-       * boundary indicators, then there is no instantiation of this class at
-       * all.
-       */
-      class FreeSurfaceHandler
-      {
-        public:
-          /**
-           * Initialize the free surface handler, allowing it to read in
-           * relevant parameters as well as giving it a reference to the
-           * Simulator that owns it, since it needs to make fairly extensive
-           * changes to the internals of the simulator.
-           */
-          FreeSurfaceHandler(Simulator<dim> &, ParameterHandler &prm);
-
-          /**
-           * The main execution step for the free surface implementation. This
-           * computes the motion of the free surface, moves the boundary nodes
-           * accordingly, redistributes the internal nodes in order to
-           * preserve mesh regularity, and calculates the Arbitrary-
-           * Lagrangian-Eulerian correction terms for advected quantities.
-           */
-          void execute();
-
-          /**
-           * Allocates and sets up the members of the FreeSurfaceHandler. This
-           * is called by Simulator<dim>::setup_dofs()
-           */
-          void setup_dofs();
-
-          /**
-           * Loop over all the mesh vertices and move them so that they are in
-           * the positions determined by the free surface implementation.
-           * Called in execute(), and also called after redistributing mesh so
-           * that the other processes know what has happened to that part of
-           * the mesh.
-           */
-          void displace_mesh();
-
-          /**
-           * Apply stabilization to a cell of the system matrix.  The
-           * stabilization is only added to cells on a free surface.  The
-           * scheme is based on that of Kaus et. al., 2010.  Called during
-           * assemly of the system matrix.
-           */
-          void apply_stabilization (const typename DoFHandler<dim>::active_cell_iterator &cell,
-                                    FullMatrix<double> &local_matrix);
-
-          /**
-           * If a geometry model uses manifolds for the refinement behavior
-           * it can produce nonsensical meshes on refinement when using a
-           * free surface, since the free surface may deform the mesh to the
-           * point where the manifold is no longer a good description of the
-           * domain.  However, it can still be useful to have the manifold
-           * description for producing a nice starting mesh with the initial
-           * refinements (that is to say, before timestepping).  This detaches
-           * manifolds from cells, and is called after the initial refinements
-           * of the domain.
-           */
-          void detach_manifolds();
-
-          /**
-           * Declare parameters for the free surface handling.
-           */
-          static
-          void declare_parameters (ParameterHandler &prm);
-
-          /**
-           * Parse parameters for the free surface handling.
-           */
-          void parse_parameters (ParameterHandler &prm);
-
-        private:
-          /**
-           * Set the boundary conditions for the solution of the elliptic
-           * problem, which computes the displacements of the internal
-           * vertices so that the mesh does not become too distored due to
-           * motion of the free surface.  Velocities of vertices on the free
-           * surface are set to be the normal of the Stokes velocity solution
-           * projected onto that surface.  Velocities of vertices on free-slip
-           * boundaries are constrained to be tangential to those boundaries.
-           * Velocities of vertices on no-slip boundaries are set to be zero.
-           */
-          void make_constraints ();
-
-          /**
-           * Project the normal part of the Stokes velocity solution onto the
-           * free surface. Called by make_constraints()
-           */
-          void project_normal_velocity_onto_boundary (LinearAlgebra::Vector &output);
-
-          /**
-           * Actually solve the elliptic problem for the mesh velocitiy.  Just
-           * solves a vector Laplacian equation.
-           */
-          void solve_elliptic_problem ();
-
-          /**
-           * From the mesh velocity called in
-           * FreeSurfaceHandler::solve_elliptic_problem() we calculate the
-           * mesh displacement with mesh_velocity*time_step.  This function
-           * also interpolates the mesh velocity onto the finite element space
-           * of the Stokes velocity system so that it can be used for ALE
-           * corrections.
-           */
-          void calculate_mesh_displacement ();
-
-          /**
-           * Reference to the Simulator object to which a FreeSurfaceHandler
-           * instance belongs
-           */
-          Simulator<dim> &sim;
-
-          /**
-           * Finite element for the free surface implementation.  Should be Q1
-           */
-          const FESystem<dim>                                       free_surface_fe;
-
-          /**
-           * DoFHanlder for the free surface implementation
-           */
-          DoFHandler<dim>                                           free_surface_dof_handler;
-
-          /**
-           * Stabilization parameter for the free surface.  Should be between
-           * zero and one. A value of zero means no stabilization.  See Kaus
-           * et. al. 2010 for more details.
-           */
-          double free_surface_theta;
-
-          /**
-           * BlockVector which stores the mesh velocity interpolated onto the
-           * Stokes velocity finite element space.  This is used for ALE
-           * corrections.
-           */
-          LinearAlgebra::BlockVector mesh_velocity;
-
-          /**
-           * Vector for storing the positions of the mesh vertices.  This
-           * vector is updated by
-           * FreeSurfaceHandler::calculate_mesh_displacement(), and is quite
-           * important for making sure the mesh stays the same shape upon
-           * redistribution of the system.
-           */
-          LinearAlgebra::Vector mesh_vertices;
-
-          /**
-           * The solution of FreeSurfaceHandler::solve_elliptic_problem().
-           */
-          LinearAlgebra::Vector mesh_vertex_velocity;
-
-          /**
-           * The matrix for solving the elliptic problem for moving the
-           * internal vertices.
-           */
-          LinearAlgebra::SparseMatrix mesh_matrix;
-
-          /**
-           * IndexSet for the locally owned DoFs for the mesh system
-           */
-          IndexSet mesh_locally_owned;
-
-          /**
-           * IndexSet for the locally relevant DoFs for the mesh system
-           */
-          IndexSet mesh_locally_relevant;
-
-          /**
-           * Storage for the mesh displacement constraints for solving the
-           * elliptic problem
-           */
-          ConstraintMatrix mesh_displacement_constraints;
-
-          /**
-           * Storage for the mesh vertex constraints to keep hanging nodes
-           * well-behaved
-           */
-          ConstraintMatrix mesh_vertex_constraints;
-
-
-          friend class Simulator<dim>;
-      };
+    private:
 
       /**
        * Shared pointer for an instance of the FreeSurfaceHandler. this way,
        * if we do not need the machinery for doing free surface stuff, we do
        * not even allocate it.
        */
-      std_cxx11::shared_ptr<FreeSurfaceHandler> free_surface;
+      std_cxx11::shared_ptr<FreeSurfaceHandler<dim> > free_surface;
 
       friend class boost::serialization::access;
       friend class SimulatorAccess<dim>;
-      friend class FreeSurfaceHandler;  //FreeSurfaceHandler needs access to the internals of the Simulator
+      friend class FreeSurfaceHandler<dim>;  // FreeSurfaceHandler needs access to the internals of the Simulator
       friend struct Parameters<dim>;
   };
 }

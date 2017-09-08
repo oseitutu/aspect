@@ -21,12 +21,12 @@ CMAKE_CURRENT_SOURCE_DIR=$3
 CMAKE_CURRENT_BINARY_DIR=$4
 
 
-# Grab ASPECT_GENERATE_REFERENCE_OUTPUT from the environment. If set to "1",
-# do not run tests normally but generate reference output instead. Also see
-# the generate_reference_output make target and the file
+# Grab ASPECT_GENERATE_REFERENCE_OUTPUT from the environment. If set to
+# something (not ""), do not run tests normally but generate reference output
+# instead. Also see the generate_reference_output make target and the file
 # ./cmake/generate_reference_output.sh
 GENERATE_REFERENCE_OUTPUT=0
-if [ "$ASPECT_GENERATE_REFERENCE_OUTPUT" -eq "1" ]; then
+if [ -n "$ASPECT_GENERATE_REFERENCE_OUTPUT" ]; then
   GENERATE_REFERENCE_OUTPUT=1
   echo "generating reference output" 1>&2
 fi
@@ -59,7 +59,7 @@ rm -f ${DIFF_OUTPUT}.failed ${DIFF_OUTPUT}
 
 case ${DIFF_EXE} in
     *numdiff)
-	${DIFF_EXE} -a 1e-6 -r 1e-8 -s ' \t\n:<>=,;' \
+	${DIFF_EXE} -V -a 1e-6 -r 1e-8 -s ' \t\n:<>=,;' \
 	    ${REF_FILE} ${GEN_FILE} > ${DIFF_OUTPUT}.tmp
 	;;
     *)

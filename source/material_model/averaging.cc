@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,17 +14,15 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 #include <deal.II/base/std_cxx11/array.h>
 #include <aspect/material_model/averaging.h>
-#include <deal.II/base/parameter_handler.h>
 #include <utility>
 #include <limits>
 
-using namespace dealii;
 
 namespace aspect
 {
@@ -45,6 +43,8 @@ namespace aspect
         return geometric_average;
       else if (s == "pick largest")
         return pick_largest;
+      else if (s == "log average")
+        return log_average;
       else if (s == "nwd arithmetic average")
         return nwd_arithmetic_average;
       else if (s == "nwd harmonic average")
@@ -141,9 +141,25 @@ namespace aspect
               values_out[i] = max;
             break;
           }
+          case log_average:
+          {
+            double sum = 0;
+            for (unsigned int i=0; i<N; ++i)
+              {
+                Assert (values_out[i] >= 0,
+                        ExcMessage ("Computing the log average "
+                                    "only makes sense for non-negative "
+                                    "quantities."));
+                sum += std::log10(values_out[i]);
+              }
+            const double log_value_average = std::pow (10.,sum/N);
+            for (unsigned int i=0; i<N; ++i)
+              values_out[i] = log_value_average;
+            break;
+          }
           case nwd_arithmetic_average:
           {
-            //initialize variables
+            // initialize variables
             double sum_value = 0;
             double sum_weights = 0;
             std::vector<double> temp_values(N,0);
@@ -195,7 +211,7 @@ namespace aspect
                   return;
                 }
 
-            //initialize variables
+            // initialize variables
             double sum_value = 0;
             double sum_weights = 0;
             std::vector<double> temp_values(N,0);
@@ -240,7 +256,7 @@ namespace aspect
           }
           case nwd_geometric_average:
           {
-            //initialize variables
+            // initialize variables
             double sum_value = 0;
             double sum_weights = 0;
             std::vector<double> temp_values(N,0);
@@ -272,7 +288,7 @@ namespace aspect
                     const double distance = position[i].distance(position[j])/max_distance;
                     double weight = alfad * ((1 + 3 * (distance / bell_shape_limit)) * (1 - (distance / bell_shape_limit)) * (1 - (distance / bell_shape_limit)) * (1 - (distance / bell_shape_limit)));
 
-                    // the weigth beyond the bell shape limit should always be zero.
+                    // the weight beyond the bell shape limit should always be zero.
                     if (distance > bell_shape_limit )
                       weight = 0;
 
@@ -316,22 +332,22 @@ namespace aspect
       base_model -> evaluate(in,out);
 
       /**
-       * Check if the size of the viscosities (and thereby all the other vectors) has been filled.
-       * If it hasn't been filled yet, it will have size 1.
+       * Check if the size of the densities (and thereby all the other vectors) is larger
+       * than one. Averaging over one or zero points does not make a difference anyway,
+       * and the normalized weighted distance averaging schemes need the distance between
+       * the points and can not handle a distance of zero.
        */
-      if (out.viscosities.size() > 1)
+      if (out.densities.size() > 1)
         {
-          /* Average the base model values value based on the chosen average */
-          for (unsigned int i=0; i < out.viscosities.size(); ++i)
-            {
-              average (averaging_operation,in.position,out.viscosities);
-              average (averaging_operation,in.position,out.densities);
-              average (averaging_operation,in.position,out.thermal_expansion_coefficients);
-              average (averaging_operation, in.position,out.specific_heat);
-              average (averaging_operation, in.position,out.compressibilities);
-              average (averaging_operation,in.position,out.entropy_derivative_pressure);
-              average (averaging_operation,in.position,out.entropy_derivative_temperature);
-            }
+          /* Average the base model values based on the chosen average */
+          average (averaging_operation,in.position,out.viscosities);
+          average (averaging_operation,in.position,out.densities);
+          average (averaging_operation,in.position,out.thermal_expansion_coefficients);
+          average (averaging_operation,in.position,out.specific_heat);
+          average (averaging_operation,in.position,out.thermal_conductivities);
+          average (averaging_operation,in.position,out.compressibilities);
+          average (averaging_operation,in.position,out.entropy_derivative_pressure);
+          average (averaging_operation,in.position,out.entropy_derivative_temperature);
         }
     }
 
@@ -345,14 +361,14 @@ namespace aspect
         {
           prm.declare_entry("Base model","simple",
                             Patterns::Selection(MaterialModel::get_valid_model_names_pattern<dim>()),
-                            "The name of a material model that will be modified by an"
+                            "The name of a material model that will be modified by an "
                             "averaging operation. Valid values for this parameter "
                             "are the names of models that are also valid for the "
                             "``Material models/Model name'' parameter. See the documentation for "
                             "that for more information.");
           prm.declare_entry ("Averaging operation", "none",
-                             Patterns::Selection ("none|arithmetic average|harmonic average|geometric average|pick largest|nwd arithmetic average|nwd harmonic average|nwd geometric average"),
-                             "Chose the averaging operation to use.");
+                             Patterns::Selection ("none|arithmetic average|harmonic average|geometric average|pick largest|log average|nwd arithmetic average|nwd harmonic average|nwd geometric average"),
+                             "Choose the averaging operation to use.");
           prm.declare_entry ("Bell shape limit", "1",
                              Patterns::Double(0),
                              "The limit normalized distance between 0 and 1 where the bell shape becomes zero. See the manual for a more information.");
@@ -374,56 +390,24 @@ namespace aspect
                   ExcMessage("You may not use ``averaging'' as the base model for "
                              "a averaging model.") );
 
+          // create the base model and initialize its SimulatorAccess base
+          // class; it will get a chance to read its parameters below after we
+          // leave the current section
           base_model.reset(create_material_model<dim>(prm.get("Base model")));
+          if (SimulatorAccess<dim> *sim = dynamic_cast<SimulatorAccess<dim>*>(base_model.get()))
+            sim->initialize_simulator (this->get_simulator());
+
           averaging_operation = Averaging<dim>::parse_averaging_operation_name(prm.get ("Averaging operation"));
           bell_shape_limit = prm.get_double ("Bell shape limit");
         }
         prm.leave_subsection();
       }
       prm.leave_subsection();
+
       /* After parsing the parameters for averaging, it is essential to parse
       parameters related to the base model. */
       base_model->parse_parameters(prm);
-    }
-
-    template <int dim>
-    bool
-    Averaging<dim>::
-    viscosity_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      return base_model->viscosity_depends_on(dependence);
-    }
-
-    template <int dim>
-    bool
-    Averaging<dim>::
-    density_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      return base_model->density_depends_on(dependence);
-    }
-
-    template <int dim>
-    bool
-    Averaging<dim>::
-    compressibility_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      return base_model->compressibility_depends_on(dependence);
-    }
-
-    template <int dim>
-    bool
-    Averaging<dim>::
-    specific_heat_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      return base_model->specific_heat_depends_on(dependence);
-    }
-
-    template <int dim>
-    bool
-    Averaging<dim>::
-    thermal_conductivity_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      return base_model->thermal_conductivity_depends_on(dependence);
+      this->model_dependence = base_model->get_model_dependence();
     }
 
     template <int dim>
@@ -441,14 +425,6 @@ namespace aspect
     {
       return base_model->reference_viscosity();
     }
-
-    template <int dim>
-    double
-    Averaging<dim>::
-    reference_density() const
-    {
-      return base_model->reference_density();
-    }
   }
 }
 
@@ -463,26 +439,26 @@ namespace aspect
                                    "within a cell. The values to average are supplied by any of the other available "
                                    "material models. In other words, it is a ``compositing material model''. "
                                    "Parameters related to the average model are read from a subsection "
-                                   "``Material model/Averaging''. "
+                                   "``Material model/Averaging''."
                                    "\n\n"
                                    "The user must specify a ``Base model'' from which material properties are "
                                    "derived. Furthermore an averaging operation must be selected, where the "
                                    "Choice should be from the list none|arithmetic average|harmonic average|"
-                                   "geometric average|pick largest|NWD arithmetic average|NWD harmonic average"
-                                   "|NWD geometric average. "
+                                   "geometric average|pick largest|log average|NWD arithmetic average|NWD harmonic average"
+                                   "|NWD geometric average."
                                    "\n\n"
                                    "NWD stands for Normalized Weighed Distance. The models with this in front "
                                    "of their name work with a weighed average, which means each quadrature point "
                                    "requires an individual weight. The weight is determined by the distance, where "
                                    "the exact relation is determined by a bell shaped curve. A bell shaped curve is "
-                                   "a continuous function which is one at it's maximum and exactly zero at and beyond "
-                                   "it's limit. This bell shaped curve is spanned around each quadrature point to "
+                                   "a continuous function which is one at its maximum and exactly zero at and beyond "
+                                   "its limit. This bell shaped curve is spanned around each quadrature point to "
                                    "determine the weighting map for each quadrature point. The used bell shape comes "
                                    "from Lucy (1977). The distance is normalized so the largest distance becomes one. "
                                    "This means that if variable ''Bell shape limit'' is exactly one, the farthest "
-                                   "quadrature point is just on the limit and it's weight will be exactly zero. In "
+                                   "quadrature point is just on the limit and its weight will be exactly zero. In "
                                    "this plugin it is not implemented as larger and equal than the limit, but larger "
-                                   "than, to ensure the the quadrature point at distance zero is always included."
+                                   "than, to ensure the quadrature point at distance zero is always included."
                                   )
   }
 }

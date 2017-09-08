@@ -13,7 +13,7 @@ set Nonlinear solver scheme                = IMPES
 
 
 subsection Boundary temperature model
-  set Model name = spherical constant
+  set List of model names = spherical constant
 
   subsection Spherical constant
     set Inner temperature = 1
@@ -47,7 +47,7 @@ subsection Geometry model
 end
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = spherical hexagonal perturbation
   subsection Spherical hexagonal perturbation
     set Angular mode = 8

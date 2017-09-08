@@ -43,7 +43,7 @@ set Nonlinear solver scheme                = Stokes only
 
 
 subsection Boundary temperature model
-  set Model name = box
+  set List of model names = box
 
 end
 
@@ -85,7 +85,7 @@ subsection Gravity model
 end
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = perturbed box
 
 end
@@ -101,8 +101,6 @@ end
 
 
 subsection Model settings
-  set Include adiabatic heating               = false
-  set Include shear heating                   = false # default: true
 
 
   set Fixed temperature boundary indicators   = 0, 1

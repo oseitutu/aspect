@@ -14,7 +14,7 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
@@ -36,7 +36,7 @@ namespace aspect
 
       KellyErrorEstimator<dim>::estimate (this->get_mapping(),
                                           this->get_dof_handler(),
-                                          QGauss<dim-1>(this->get_fe().base_element(this->introspection().base_elements.velocities).degree+1),
+                                          QGauss<dim-1>(this->introspection().polynomial_degree.velocities+1),
                                           typename FunctionMap<dim>::type(),
                                           this->get_solution(),
                                           indicators,

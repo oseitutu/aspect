@@ -14,7 +14,7 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
@@ -71,7 +71,7 @@ namespace aspect
   {
     ASPECT_REGISTER_MESH_REFINEMENT_CRITERION(StrainRate,
                                               "strain rate",
-                                              "A mesh refinement criterion that computes the"
+                                              "A mesh refinement criterion that computes the "
                                               "refinement indicators equal to the strain rate "
                                               "norm computed at the center of the elements.")
   }

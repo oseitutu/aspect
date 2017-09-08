@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,13 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__heating_model_shear_heating_h
-#define __aspect__heating_model_shear_heating_h
+#ifndef _aspect_heating_model_shear_heating_h
+#define _aspect_heating_model_shear_heating_h
 
 #include <aspect/heating_model/interface.h>
 #include <aspect/simulator_access.h>
@@ -55,27 +55,6 @@ namespace aspect
         evaluate (const MaterialModel::MaterialModelInputs<dim> &material_model_inputs,
                   const MaterialModel::MaterialModelOutputs<dim> &material_model_outputs,
                   HeatingModel::HeatingModelOutputs &heating_model_outputs) const;
-
-        /**
-         * @name Functions used in dealing with run-time parameters
-         * @{
-         */
-        /**
-         * Declare the parameters this class takes through input files.
-         */
-        static
-        void
-        declare_parameters (ParameterHandler &prm);
-
-        /**
-         * Read the parameters this class declares from the parameter file.
-         */
-        virtual
-        void
-        parse_parameters (ParameterHandler &prm);
-        /**
-         * @}
-         */
     };
   }
 }

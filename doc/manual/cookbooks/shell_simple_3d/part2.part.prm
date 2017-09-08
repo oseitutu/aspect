@@ -1,4 +1,5 @@
-subsection Geometry model set Model name = spherical shell 
+subsection Geometry model
+  set Model name = spherical shell 
 
   subsection Spherical shell
     set Inner radius  = 3481000 
@@ -14,5 +15,4 @@ subsection Model settings
 
   set Fixed temperature boundary indicators   = inner, outer
 
-  set Include shear heating                   = false 
 end

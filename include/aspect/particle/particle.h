@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2011, 2012, 2013 by the authors of the ASPECT code.
+ Copyright (C) 2015 - 2017 by the authors of the ASPECT code.
 
  This file is part of ASPECT.
 
@@ -14,343 +14,351 @@
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with ASPECT; see the file doc/COPYING.  If not see
+ along with ASPECT; see the file LICENSE.  If not see
  <http://www.gnu.org/licenses/>.
  */
 
-#ifndef __aspect__particle_particle_h
-#define __aspect__particle_particle_h
+#ifndef _aspect_particle_particle_h
+#define _aspect_particle_particle_h
 
-#include <aspect/postprocess/interface.h>
-#include <aspect/simulator_access.h>
+#include <aspect/global.h>
+#include <aspect/particle/property_pool.h>
+
+#include <deal.II/base/point.h>
+#include <deal.II/base/types.h>
+#include <deal.II/base/array_view.h>
+
+#include <boost/serialization/vector.hpp>
 
 namespace aspect
 {
   namespace Particle
   {
+    using namespace dealii;
+
     /**
-     * Typedef of cell level/index pair
+     * A namespace for all type definitions related to particles.
      */
-    typedef std::pair<int, int> LevelInd;
-
-    class MPIDataInfo
+    namespace types
     {
-      public:
-        std::string     name;
-        unsigned int    n_elements;
+      using namespace dealii::types;
 
-        MPIDataInfo(std::string name,
-                    unsigned int num_elems)
-          :
-          name(name),
-          n_elements(num_elems) {};
-    };
+      /**
+       * Typedef of cell level/index pair. TODO: replace this by the
+       * active_cell_index from deal.II 8.3 onwards.
+       */
+      typedef std::pair<int, int> LevelInd;
+
+      /* Type definitions */
+
+#ifdef DEAL_II_WITH_64BIT_INDICES
+      /**
+       * The type used for indices of particles. While in
+       * sequential computations the 4 billion indices of 32-bit unsigned integers
+       * is plenty, parallel computations using hundreds of processes can overflow
+       * this number and we need a bigger index space. We here utilize the same
+       * build variable that controls the dof indices of deal.II because the number
+       * of degrees of freedom and the number of particles are typically on the same
+       * order of magnitude.
+       *
+       * The data type always indicates an unsigned integer type.
+       */
+      typedef unsigned long long int particle_index;
+
+      /**
+       * An identifier that denotes the MPI type associated with
+       * types::global_dof_index.
+       */
+#  define ASPECT_PARTICLE_INDEX_MPI_TYPE MPI_UNSIGNED_LONG_LONG
+#else
+      /**
+       * The type used for indices of particles. While in
+       * sequential computations the 4 billion indices of 32-bit unsigned integers
+       * is plenty, parallel computations using hundreds of processes can overflow
+       * this number and we need a bigger index space. We here utilize the same
+       * build variable that controls the dof indices of deal.II because the number
+       * of degrees of freedom and the number of particles are typically on the same
+       * order of magnitude.
+       *
+       * The data type always indicates an unsigned integer type.
+       */
+      typedef unsigned int particle_index;
+
+      /**
+       * An identifier that denotes the MPI type associated with
+       * types::global_dof_index.
+       */
+#  define ASPECT_PARTICLE_INDEX_MPI_TYPE MPI_UNSIGNED
+#endif
+    }
 
     /**
      * Base class of particles - represents a particle with position,
-     * velocity, and an ID number. This class can be extended to include data
-     * related to a particle. An example of this is shown in the DataParticle
-     * class.
+     * an ID number and a variable number of properties. This class
+     * can be extended to include data related to a particle by the property
+     * manager.
+     *
+     * @ingroup Particle
+     *
      */
-    template <int dim>
-    class BaseParticle
+    template <int dim, int spacedim=dim>
+    class Particle
     {
-      private:
-        /**
-         * Current particle location
-         */
-        Point<dim>      location;
-
-        /**
-         * Current particle velocity
-         */
-        Point<dim>      velocity;
-
-        /**
-         * Globally unique ID of particle
-         */
-        double          id;
-
-        /**
-         * Whether this particle is in the local subdomain or not
-         */
-        bool            is_local;
-
-        /**
-         * Whether to check the velocity of this particle This is used for
-         * integration schemes which require multiple integration steps for
-         * some particles, but not for others
-         */
-        bool            check_vel;
-
       public:
         /**
-         * Empty constructor for BaseParticle, creates a particle at the
-         * origin with zero velocity.
+         * Empty constructor for Particle, creates a particle at the
+         * origin.
          */
-        BaseParticle ();
+        Particle ();
 
         /**
-         * Constructor for BaseParticle, creates a particle with the specified
-         * ID at the specified location with zero velocity. Note that Aspect
-         * does not check for duplicate particle IDs so the user must be sure
-         * the IDs are unique over all processes.
+         * Constructor for Particle, creates a particle with the specified
+         * ID at the specified location. Note that there is no
+         * check for duplicate particle IDs so the user must
+         * make sure the IDs are unique over all processes.
          *
-         * @param[in] new_loc Initial location of particle.
-         * @param[in] new_id Globally unique ID number of particle.
+         * @param[in] location Initial location of particle.
+         * @param[in] reference_location Initial location of the particle
+         * in the coordinate system of the reference cell.
+         * @param[in] id Globally unique ID number of particle.
          */
-        BaseParticle (const Point<dim> &new_loc,
-                      const double &new_id);
+        Particle (const Point<spacedim> &location,
+                  const Point<dim> &reference_location,
+                  const types::particle_index id);
 
         /**
-         * Destructor for BaseParticle
+         * Copy-Constructor for Particle, creates a particle with exactly the
+         * state of the input argument. Note that since each particle has a
+         * handle for a certain piece of the property memory, and is responsible
+         * for registering and freeing this memory in the property pool this
+         * constructor registers a new chunk, and copies the properties.
          */
-        virtual
-        ~BaseParticle ();
+        Particle (const Particle<dim,spacedim> &particle);
 
         /**
-         * Get the number of doubles required to represent this particle for
-         * communication.
+         * Constructor for Particle, creates a particle from a data vector.
+         * This constructor is usually called after serializing a particle by
+         * calling the write_data function.
          *
-         * @return Number of doubles required to represent this particle
+         * @param[in,out] begin_data A pointer to a memory location from which
+         * to read the information that completely describes a particle. This
+         * class then de-serializes its data from this memory location and
+         * advance the pointer accordingly.
+         *
+         * @param[in,out] property_pool An optional pointer to a property pool
+         * that is used to manage the property data used by this particle. Note that
+         * if a non-null pointer is handed over this constructor assumes @p begin_data
+         * contains serialized data of the same length and type that is allocated
+         * by @p property_pool.
          */
-        static unsigned int
-        data_len ();
+        Particle (const void *&begin_data,
+                  PropertyPool &property_pool);
+
+#ifdef DEAL_II_WITH_CXX11
+        /**
+         * Move constructor for Particle, creates a particle from an existing
+         * one by stealing its state.
+         */
+        Particle (Particle<dim,spacedim> &&particle);
 
         /**
-         * Read the particle data from the specified vector of doubles.
-         *
-         * @param [in] data The vector of double data to read from.
-         * @param [in] pos The position in the data vector to start reading
-         * from.
-         * @return The position in the vector of the next unread double.
+         * Copy assignment operator.
          */
-        virtual unsigned int read_data(const std::vector<double> &data, const unsigned int &pos);
+        Particle<dim,spacedim> &operator=(const Particle<dim,spacedim> &particle);
 
         /**
-         * Write particle data to a vector of doubles.
-         *
-         * @param [in,out] data The vector of doubles to write integrator data
-         * into.
+         * Move assignment operator.
          */
-        virtual void write_data(std::vector<double> &data) const;
+        Particle<dim,spacedim> &operator=(Particle<dim,spacedim> &&particle);
+#endif
 
         /**
-         * Set the location of this particle. Note that this does not check
-         * whether this is a valid location in the simulation domain.
+         * Destructor. Releases the property handle if it is valid, and
+         * therefore frees that memory space for other particles. (Note:
+         * the memory is managed by the property pool, and the pool is responsible
+         * for what happens to the memory.
+         */
+        ~Particle ();
+
+        /**
+         * Write particle data into a data array. The array is expected
+         * to be large enough to take the data, and the void pointer should
+         * point to the first element in which the data should be written. This
+         * function is meant for serializing all particle properties and
+         * afterwards de-serializing the properties by calling the appropriate
+         * constructor Particle(void *&data, PropertyPool *property_pool = NULL);
          *
-         * @param [in] new_loc The new location for this particle.
+         * @param [in,out] data The memory location to write particle data
+         * into. This pointer points to the begin of the memory, in which the
+         * data will be written and it will be advanced by the serialized size
+         * of this particle.
          */
         void
-        set_location (const Point<dim> &new_loc);
+        write_data(void *&data) const;
+
+        /**
+          * Set the location of this particle. Note that this does not check
+          * whether this is a valid location in the simulation domain.
+          *
+          * @param [in] new_location The new location for this particle.
+          */
+        void
+        set_location (const Point<spacedim> &new_location);
 
         /**
          * Get the location of this particle.
          *
          * @return The location of this particle.
          */
-        Point<dim>
+        const Point<spacedim> &
         get_location () const;
 
         /**
-         * Set the velocity of this particle.
+         * Set the reference location of this particle.
          *
-         * @param [in] new_vel The new velocity for this particle.
+         * @param [in] new_reference_location The new reference location for
+         * this particle.
          */
         void
-        set_velocity (Point<dim> new_vel);
+        set_reference_location (const Point<dim> &new_reference_location);
 
         /**
-         * Get the velocity of this particle.
-         *
-         * @return The velocity of this particle.
+         * Return the reference location of this particle in its current cell.
          */
-        Point<dim>
-        get_velocity () const;
+        const Point<dim> &
+        get_reference_location () const;
 
         /**
-         * Get the ID number of this particle.
-         *
-         * @return The id of this particle.
+         * Return the ID number of this particle.
          */
-        double
+        types::particle_index
         get_id () const;
 
         /**
-         * Check whether the particle is marked as being local to this
-         * subdomain. Note that this function does not actually perform the
-         * check for locality.
-         *
-         * @return Whether the particle is marked as local.
-         */
-        bool
-        local () const;
-
-        /**
-         * Mark the particle as being local of not. Note that this function
-         * does not perform the check for locality.
-         *
-         * @param[in] new_local Whether to mark the particle as local.
+         * Tell the particle where to store its properties (even if it does not
+         * own properties). Usually this is only done once per particle, but
+         * since the particle generator does not know about the properties
+         * we want to do it not at construction time. Another use for this
+         * function is after particle transfer to a new process.
          */
         void
-        set_local (bool new_local);
+        set_property_pool(PropertyPool &property_pool);
 
         /**
-         * Whether to check the particle velocity at its current location.
-         * This is used for integrators where the particle velocity may not
-         * need to be checked every step.
-         *
-         * @return Whether to check the particle velocity
-         */
+          * Returns whether this particle has a valid property pool and a valid
+          * handle to properties.
+          */
         bool
-        vel_check () const;
+        has_properties () const;
 
         /**
-         * Mark whether to check the particle velocity.
+         * Set the properties of this particle.
          *
-         * @param[in] new_vel_check Whether to check the particle velocity.
+         * @param [in] new_properties A vector containing the
+         * new properties for this particle.
          */
         void
-        set_vel_check (bool new_vel_check);
+        set_properties (const std::vector<double> &new_properties);
 
         /**
-         * Add the MPI data description for this particle type to the vector.
+         * Get write-access to properties of this particle.
          *
-         * @param[in,out] data_info Vector to which MPI data description is
-         * appended.
+         * @return An ArrayView of the properties of this particle.
          */
-        static void
-        add_mpi_types (std::vector<MPIDataInfo> &data_info);
+        const ArrayView<double>
+        get_properties ();
+
+        /**
+         * Get read-access to properties of this particle.
+         *
+         * @return An ArrayView of the properties of this particle.
+         */
+        const ArrayView<const double>
+        get_properties () const;
+
+        /**
+         * Write the data of this object to a stream for the purpose of
+         * serialization.
+         */
+        template <class Archive>
+        void save (Archive &ar, const unsigned int version) const;
+
+        /**
+         * Read the data of this object from a stream for the purpose of
+         * serialization.
+         */
+        template <class Archive>
+        void load (Archive &ar, const unsigned int version);
+
+        BOOST_SERIALIZATION_SPLIT_MEMBER()
+
+      private:
+        /**
+         * Current particle location
+         */
+        Point<spacedim>             location;
+
+        /**
+         * Current particle location in the reference cell.
+         * Storing this reduces the number of times we need to compute this
+         * location, which takes a significant amount of computing time.
+         */
+        Point<dim>             reference_location;
+
+        /**
+         * Globally unique ID of particle
+         */
+        types::particle_index  id;
+
+        /**
+         * A pointer to the property pool. Necessary to translate from the
+         * handle to the actual memory locations.
+         */
+        PropertyPool *property_pool;
+
+        /**
+         * A handle to all particle properties
+         */
+        PropertyPool::Handle properties;
     };
 
-    /**
-     * DataParticle provides an example of how to extend the BaseParticle
-     * class to include related particle data. This allows users to attach
-     * scalars/vectors/tensors/etc to particles and ensure they are
-     * transmitted correctly over MPI and written to output files.
-     */
-    template <int dim, int data_dim>
-    class DataParticle : public BaseParticle<dim>
+    /* -------------------------- inline and template functions ---------------------- */
+
+    template <int dim, int spacedim>
+    template <class Archive>
+    void Particle<dim,spacedim>::load (Archive &ar, const unsigned int)
     {
-      private:
-        double      val[data_dim];
+      unsigned int n_properties = 0;
 
-      private:
-        DataParticle()
+      ar &location
+      & reference_location
+      & id
+      & n_properties;
+
+      if (n_properties > 0)
         {
-          for (unsigned int i=0; i<data_dim; ++i) val[i] = 0;
-        };
-
-        DataParticle(const Point<dim> &new_loc, const double &new_id) : BaseParticle<dim>(new_loc, new_id)
-        {
-          for (unsigned int i=0; i<data_dim; ++i) val[i] = 0;
-        };
-
-        static unsigned int data_len()
-        {
-          return BaseParticle<dim>::data_len() + data_dim;
-        };
-
-        virtual unsigned int read_data(const std::vector<double> &data, const unsigned int &pos)
-        {
-          unsigned int  p;
-
-          // Read the parent data first
-          p = BaseParticle<dim>::read_data(data, pos);
-
-          // Then read the DataParticle data
-          for (unsigned i=0; i<data_dim; ++i)
-            {
-              val[i] = data.at(p++);
-            }
-
-          return p;
-        };
-
-
-        virtual void write_data(std::vector<double> &data) const
-        {
-          // Write the parent data first
-          BaseParticle<dim>::write_data(data);
-
-          // Then write the DataParticle data
-          for (unsigned i=0; i<data_dim; ++i)
-            {
-              data.push_back(val[i]);
-            }
-        };
-
-        /**
-         * Returns a vector from the first dim components of val
-         *
-         * @return vector representation of first dim components of the
-         * particle data
-         */
-        Point<dim>
-        get_vector () const;
-
-        /**
-         * Sets the first dim components of val to the specified vector value
-         *
-         * @param [in] new_vec Vector to set the DataParticle data to
-         */
-        void set_vector(Point<dim> new_vec)
-        {
-          AssertThrow(data_dim>=dim, std::out_of_range("set_vector"));
-          for (unsigned int i=0; i<dim; ++i)
-            val[i] = new_vec(i);
+          properties = new double[n_properties];
+          ar &boost::serialization::make_array(properties, n_properties);
         }
-
-        /**
-         * Return a reference to an element of the DataParticle data
-         *
-         * @param [in] ind Index of the data array
-         * @return Reference to double value at the requested index
-         */
-        double &operator[](const unsigned int &ind)
-        {
-          AssertThrow(data_dim>ind, std::out_of_range("DataParticle[]"));
-          return val[ind];
-        }
-
-        /**
-         * Return the value of an element of the DataParticle data
-         *
-         * @param [in] ind Index of the data array
-         * @return Value at the requested index
-         */
-        double operator[](const unsigned int &ind) const
-        {
-          AssertThrow(data_dim>ind, std::out_of_range("DataParticle[]"));
-          return val[ind];
-        }
-
-        /**
-         * Set up the MPI data type information for the DataParticle type
-         *
-         * @param [in,out] data_info Vector to append MPIDataInfo objects to
-         */
-        static void add_mpi_types(std::vector<MPIDataInfo> &data_info)
-        {
-          // Set up the parent types first
-          BaseParticle<dim>::add_mpi_types(data_info);
-
-          // Then add our own
-          data_info.push_back(MPIDataInfo("data", data_dim));
-        };
-    };
-
-    // A particle with associated values, such as scalars, vectors or tensors
-    template <int dim, int data_dim>
-    inline Point<dim>
-    DataParticle<dim,data_dim>::get_vector () const
-    {
-      AssertThrow(data_dim >= dim, std::out_of_range ("get_vector"));
-      Point < dim > p;
-      for (unsigned int i = 0; i < dim; ++i)
-        p (i) = val[i];
     }
 
+    template <int dim, int spacedim>
+    template <class Archive>
+    void Particle<dim,spacedim>::save (Archive &ar, const unsigned int) const
+    {
+      unsigned int n_properties = 0;
+      if ((property_pool != NULL) && (properties != PropertyPool::invalid_handle))
+        n_properties = get_properties().size();
+
+      ar &location
+      & reference_location
+      & id
+      & n_properties;
+
+      if (n_properties > 0)
+        ar &boost::serialization::make_array(properties, n_properties);
+
+    }
   }
 }
 

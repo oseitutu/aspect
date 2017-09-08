@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011, 2012, 2014 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,17 +14,18 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__geometry_model_interface_h
-#define __aspect__geometry_model_interface_h
+#ifndef _aspect_geometry_model_interface_h
+#define _aspect_geometry_model_interface_h
 
 #include <aspect/plugins.h>
 #include <deal.II/base/parameter_handler.h>
 #include <deal.II/distributed/tria.h>
+#include <deal.II/base/std_cxx11/array.h>
 
 #include <set>
 
@@ -92,12 +93,60 @@ namespace aspect
         double length_scale () const = 0;
 
         /**
-         * Returns the depth that corresponds to the given position. The
-         * returned value is between 0 and maximal_depth(), where 0 denotes
-         * the surface.
+         * Return the depth that corresponds to the given position. The
+         * returned value is between 0 and maximal_depth(), where points
+         * with a zero depth correspond to the "surface" of the model.
+         *
+         * Computing a depth requires a geometry model to define a
+         * "vertical" direction. For example, the Box model considers
+         * the $(0,1)^T$ vector in 2d (and the $(0,0,1)^T$ vector in
+         * 3d) as vertical and considers the "top" boundary as the
+         * "surface". Similarly, the spherical shell takes the radial
+         * vector as "vertical" and the outer boundary as "surface".
+         * In most cases, how geometry models define "vertical" and
+         * "surface" will be intuitive and obvious. In almost all
+         * cases one will use a gravity model that also matches these
+         * definitions.
+         *
+         * @note Implementations of this function in derived classes can
+         * only compute the depth with regard to the <i>reference
+         * configuration</i> of the geometry, i.e., the geometry initially
+         * created. If you are using a dynamic topography in your models
+         * that changes in every time step, then the <i>actual</i> depth
+         * of a point with regard to this dynamic topography will not
+         * match the value this function returns. This is so because
+         * computing the actual depth is difficult: In parallel computations,
+         * the processor on which you want to evaluate the depth of a point
+         * may know nothing about the displacement of the surface anywhere
+         * if it happens to store only interior cells. furthermore, it is
+         * not even clear what "depth" one would compute in such situations:
+         * The distance to the closest surface point? The vertical distance
+         * to the surface point directly above? Or the length of the line
+         * from the given point to a surface point that is locally always
+         * parallel to the gravity vector? For all of these reasons, this
+         * function simply returns the geometric vertical depth of a point
+         * in the known and fixed reference geometry.
          */
         virtual
         double depth(const Point<dim> &position) const = 0;
+
+        /**
+         * Takes the Cartesian points (x,z or x,y,z) and returns standardized
+         * coordinates which are most 'natural' to the geometry model. For a box
+         * this will  be (x,z) in 2d or (x,y,z) in 3d, and for a spheroid geometry
+         * model it  will be (radius, longitude) in 2d and (radius, longitude,
+         * latitude) in 3d.
+         */
+        virtual
+        std_cxx11::array<double,dim> cartesian_to_natural_coordinates(const Point<dim> &position) const;
+
+        /**
+         * Undoes the action of cartesian_to_natural_coordinates, and turns the
+         * coordinate system which is most 'natural' to the geometry model into
+         * Cartesian coordinates.
+         */
+        virtual
+        Point<dim> natural_to_cartesian_coordinates(const std_cxx11::array<double,dim> &position) const;
 
         /**
          * Returns a representative point for a given depth. Such a point must
@@ -241,6 +290,14 @@ namespace aspect
         has_curved_elements() const;
 
         /**
+         * If true, the queried point (in Cartesian coordinates)
+         * lies in the domain specified by the geometry.
+         */
+        virtual
+        bool
+        point_is_in_domain(const Point<dim> &p) const = 0;
+
+        /**
          * Declare the parameters this class takes through input files. The
          * default implementation of this function does not describe any
          * parameters. Consequently, derived classes do not have to overload
@@ -300,7 +357,6 @@ namespace aspect
     Interface<dim> *
     create_geometry_model (ParameterHandler &prm);
 
-
     /**
      * Declare the runtime parameters of the registered geometry models.
      *
@@ -309,6 +365,20 @@ namespace aspect
     template <int dim>
     void
     declare_parameters (ParameterHandler &prm);
+
+    /**
+     * For the current plugin subsystem, write a connection graph of all of the
+     * plugins we know about, in the format that the
+     * programs dot and neato understand. This allows for a visualization of
+     * how all of the plugins that ASPECT knows about are interconnected, and
+     * connect to other parts of the ASPECT code.
+     *
+     * @param output_stream The stream to write the output to.
+     */
+    template <int dim>
+    void
+    write_plugin_graph (std::ostream &output_stream);
+
 
 
     /**

@@ -70,10 +70,10 @@ end
 # temperature boundary conditions.
 
 subsection Boundary temperature model
-  set Model name = box
+  set List of model names = box
 end
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = function
 
   subsection Function

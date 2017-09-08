@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,13 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/postprocess/interface.h>
-#include <aspect/simulator_access.h>
+#include <aspect/utilities.h>
 
 #include <typeinfo>
 
@@ -77,7 +77,6 @@ namespace aspect
 
 
 // ------------------------------ Manager -----------------------------
-
 
 
     template <int dim>
@@ -157,8 +156,8 @@ namespace aspect
       std_cxx11::tuple
       <void *,
       void *,
-      internal::Plugins::PluginList<Interface<2> >,
-      internal::Plugins::PluginList<Interface<3> > > registered_plugins;
+      aspect::internal::Plugins::PluginList<Interface<2> >,
+      aspect::internal::Plugins::PluginList<Interface<3> > > registered_plugins;
     }
 
 
@@ -182,7 +181,7 @@ namespace aspect
                           "at the end of each time step. Some of these postprocessors will "
                           "declare their own parameters which may, for example, include that "
                           "they will actually do something only every so many time steps or "
-                          "years. Alternatively, the text 'all' indicates that all available "
+                          "years. Alternatively, the text `all' indicates that all available "
                           "postprocessors should be run after each time step.\n\n"
                           "The following postprocessors are available:\n\n"
                           +
@@ -210,6 +209,10 @@ namespace aspect
       {
         postprocessor_names
           = Utilities::split_string_list(prm.get("List of postprocessors"));
+        AssertThrow(Utilities::has_unique_entries(postprocessor_names),
+                    ExcMessage("The list of strings for the parameter "
+                               "'Postprocess/List of postprocessors' contains entries more than once. "
+                               "This is not allowed. Please check your parameter file."));
       }
       prm.leave_subsection();
 
@@ -226,6 +229,17 @@ namespace aspect
             postprocessor_names.push_back (std_cxx11::get<0>(*p));
         }
 
+      // see if the user specified "global statistics" somewhere; if so, remove it from the list
+      std::vector<std::string>::iterator new_end
+        = std::remove (postprocessor_names.begin(),
+                       postprocessor_names.end(),
+                       "global statistics");
+      if (new_end != postprocessor_names.end())
+        postprocessor_names.erase (new_end, postprocessor_names.end());
+
+      // in any case, put the global statistics postprocessor at the front:
+      postprocessor_names.insert(postprocessor_names.begin(), "global statistics");
+
       // then go through the list, create objects and let them parse
       // their own parameters
       for (unsigned int name=0; name<postprocessor_names.size(); ++name)
@@ -235,7 +249,7 @@ namespace aspect
                                      .create_plugin (postprocessor_names[name],
                                                      "Postprocessor plugins")));
           if (SimulatorAccess<dim> *sim = dynamic_cast<SimulatorAccess<dim>*>(&*postprocessors.back()))
-            sim->initialize (this->get_simulator());
+            sim->initialize_simulator (this->get_simulator());
 
           postprocessors.back()->parse_parameters (prm);
           postprocessors.back()->initialize ();
@@ -373,6 +387,16 @@ namespace aspect
                                                                description,
                                                                declare_parameters_function,
                                                                factory_function);
+    }
+
+
+
+    template <int dim>
+    void
+    Manager<dim>::write_plugin_graph (std::ostream &out)
+    {
+      std_cxx11::get<dim>(registered_plugins).write_plugin_graph ("Postprocessor interface",
+                                                                  out);
     }
 
   }

@@ -30,7 +30,7 @@ subsection Compositional fields
   set Number of fields = 1
 end
 
-subsection Compositional initial conditions
+subsection Initial composition model
   set Model name = function
 
   subsection Function
@@ -61,12 +61,11 @@ subsection Model settings
 
   set Fixed temperature boundary indicators   = 0,1
 
-  set Include shear heating                   = false
 end
 
 
 subsection Boundary temperature model
-  set Model name = spherical constant
+  set List of model names = spherical constant
   subsection Spherical constant
     set Inner temperature = 4273
     set Outer temperature = 973
@@ -74,7 +73,7 @@ subsection Boundary temperature model
 end
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = spherical hexagonal perturbation
 end
 

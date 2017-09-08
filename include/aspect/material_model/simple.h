@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011, 2012 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,17 +14,15 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
-
-#ifndef __aspect__model_simple_h
-#define __aspect__model_simple_h
+#ifndef _aspect_material_model_simple_h
+#define _aspect_material_model_simple_h
 
 #include <aspect/material_model/interface.h>
 #include <aspect/simulator_access.h>
-#include <deal.II/base/parameter_handler.h>
 
 namespace aspect
 {
@@ -46,7 +44,6 @@ namespace aspect
     class Simple : public MaterialModel::Interface<dim>, public ::aspect::SimulatorAccess<dim>
     {
       public:
-
         virtual void evaluate(const MaterialModel::MaterialModelInputs<dim> &in,
                               MaterialModel::MaterialModelOutputs<dim> &out) const;
 
@@ -54,45 +51,6 @@ namespace aspect
          * @name Qualitative properties one can ask a material model
          * @{
          */
-
-        /**
-         * Return true if the viscosity() function returns something that may
-         * depend on the variable identifies by the argument.
-         */
-        virtual bool
-        viscosity_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the density returns something that may
-         * depend on the variable identifies by the argument.
-         */
-        virtual bool
-        density_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the compressibility returns something
-         * that may depend on the variable identifies by the argument.
-         *
-         * This function must return false for all possible arguments if the
-         * is_compressible() function returns false.
-         */
-        virtual bool
-        compressibility_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the specific_heat() function returns something that
-         * may depend on the variable identifies by the argument.
-         */
-        virtual bool
-        specific_heat_depends_on (const NonlinearDependence::Dependence dependence) const;
-
-        /**
-         * Return true if the thermal_conductivity returns
-         * something that may depend on the variable identifies by the
-         * argument.
-         */
-        virtual bool
-        thermal_conductivity_depends_on (const NonlinearDependence::Dependence dependence) const;
 
         /**
          * Return whether the model is compressible or not.  Incompressibility
@@ -112,15 +70,6 @@ namespace aspect
          * @{
          */
         virtual double reference_viscosity () const;
-
-        virtual double reference_density () const;
-
-        virtual double reference_thermal_expansion_coefficient () const;
-
-//TODO: should we make this a virtual function as well? where is it used?
-        double reference_thermal_diffusivity () const;
-
-        double reference_cp () const;
         /**
          * @}
          */
@@ -152,6 +101,8 @@ namespace aspect
         double eta;
         double composition_viscosity_prefactor;
         double thermal_viscosity_exponent;
+        double maximum_thermal_prefactor;
+        double minimum_thermal_prefactor;
         double thermal_alpha;
         double reference_specific_heat;
 

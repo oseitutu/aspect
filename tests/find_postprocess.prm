@@ -9,7 +9,7 @@ set Nonlinear solver scheme                = IMPES
 
 
 subsection Boundary temperature model
-  set Model name = box2
+  set List of model names = box2
 end
 
 
@@ -30,7 +30,7 @@ subsection Geometry model
 end
 
 
-subsection Initial conditions
+subsection Initial temperature model
   set Model name = perturbed box
 end
 

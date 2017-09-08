@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,14 +14,13 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 #include <aspect/material_model/simple_compressible.h>
-#include <deal.II/base/parameter_handler.h>
+#include <aspect/adiabatic_conditions/interface.h>
 
-using namespace dealii;
 
 namespace aspect
 {
@@ -45,8 +44,8 @@ namespace aspect
           out.thermal_expansion_coefficients[i] = thermal_alpha;
 
           double rho = reference_rho * std::exp(reference_compressibility * (pressure - this->get_surface_pressure()));
-          if (this->get_adiabatic_conditions().is_initialized())
-            rho *= (1 - thermal_alpha * (temperature - this->get_adiabatic_conditions().temperature(position)));
+          rho *= (1 - thermal_alpha * (temperature - this->get_adiabatic_conditions().temperature(position)));
+
           out.densities[i] = rho;
           out.compressibilities[i] = reference_compressibility; // 1/rho drho/dp
           out.entropy_derivative_pressure[i] = 0.0;
@@ -67,84 +66,6 @@ namespace aspect
       return eta;
     }
 
-    template <int dim>
-    double
-    SimpleCompressible<dim>::
-    reference_density () const
-    {
-      return reference_rho;
-    }
-
-    template <int dim>
-    double
-    SimpleCompressible<dim>::
-    reference_thermal_expansion_coefficient () const
-    {
-      return thermal_alpha;
-    }
-
-    template <int dim>
-    double
-    SimpleCompressible<dim>::
-    reference_cp () const
-    {
-      return reference_specific_heat;
-    }
-
-    template <int dim>
-    double
-    SimpleCompressible<dim>::
-    reference_thermal_diffusivity () const
-    {
-      return k_value/(reference_rho*reference_specific_heat);
-    }
-
-    template <int dim>
-    bool
-    SimpleCompressible<dim>::
-    viscosity_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    SimpleCompressible<dim>::
-    density_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      // compare this with the implementation of the density() function
-      // to see the dependencies
-      if ((dependence & NonlinearDependence::temperature) != NonlinearDependence::none)
-        return (thermal_alpha != 0);
-      else if ((dependence & NonlinearDependence::pressure) != NonlinearDependence::none)
-        return (reference_compressibility != 0);
-      else
-        return false;
-    }
-
-    template <int dim>
-    bool
-    SimpleCompressible<dim>::
-    compressibility_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    SimpleCompressible<dim>::
-    specific_heat_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    SimpleCompressible<dim>::
-    thermal_conductivity_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
 
 
     template <int dim>
@@ -177,7 +98,7 @@ namespace aspect
                              "Units: $W/m/K$.");
           prm.declare_entry ("Reference specific heat", "1250",
                              Patterns::Double (0),
-                             "The value of the specific heat $cp$. "
+                             "The value of the specific heat $C_p$. "
                              "Units: $J/kg/K$.");
           prm.declare_entry ("Thermal expansion coefficient", "2e-5",
                              Patterns::Double (0),
@@ -213,6 +134,18 @@ namespace aspect
         prm.leave_subsection();
       }
       prm.leave_subsection();
+
+      // Declare dependencies on solution variables
+      this->model_dependence.viscosity = NonlinearDependence::none;
+      this->model_dependence.compressibility = NonlinearDependence::none;
+      this->model_dependence.specific_heat = NonlinearDependence::none;
+      this->model_dependence.thermal_conductivity = NonlinearDependence::none;
+      this->model_dependence.density = NonlinearDependence::none;
+
+      if (thermal_alpha != 0)
+        this->model_dependence.density |= NonlinearDependence::temperature;
+      if (reference_compressibility != 0)
+        this->model_dependence.density |= NonlinearDependence::pressure;
     }
   }
 }

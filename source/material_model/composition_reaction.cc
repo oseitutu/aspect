@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,15 +14,14 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/material_model/composition_reaction.h>
-#include <deal.II/base/parameter_handler.h>
+#include <aspect/geometry_model/interface.h>
 
-using namespace dealii;
 
 namespace aspect
 {
@@ -30,36 +29,90 @@ namespace aspect
   {
 
     template <int dim>
-    double
+    void
     CompositionReaction<dim>::
-    viscosity (const double temperature,
-               const double,
-               const std::vector<double> &composition,       /*composition*/
-               const SymmetricTensor<2,dim> &,
-               const Point<dim> &) const
+    evaluate(const MaterialModelInputs<dim> &in,
+             MaterialModelOutputs<dim> &out) const
     {
-      const double delta_temp = temperature-reference_T;
-      double temperature_dependence = std::max(std::min(std::exp(-thermal_viscosity_exponent*delta_temp/reference_T),1e2),1e-2);
+      ReactionRateOutputs<dim> *reaction_rate_out = out.template get_additional_output<ReactionRateOutputs<dim> >();
 
-      if (std::isnan(temperature_dependence))
-        temperature_dependence = 1.0;
-
-      double composition_dependence = 1.0;
-      switch (composition.size())
+      for (unsigned int i=0; i < in.position.size(); ++i)
         {
-          case 0:
-            return composition_dependence * temperature_dependence * eta;
-          case 1:
-            //geometric interpolation
-            return (pow(10, ((1-composition[0]) * log10(eta*temperature_dependence)
-                             + composition[0] * log10(eta*composition_viscosity_prefactor_1*temperature_dependence))));
-          default:
-            return (pow(10, ((1 - 0.5*composition[0] - 0.5*composition[1]) * log10(eta*temperature_dependence)
-                             + 0.5 * composition[0] * log10(eta*composition_viscosity_prefactor_1*temperature_dependence)
-                             + 0.5 * composition[1] * log10(eta*composition_viscosity_prefactor_2*temperature_dependence))));
+          const double temperature = in.temperature[i];
+          const std::vector<double> &composition = in.composition[i];
+          const double delta_temp = temperature-reference_T;
+          double temperature_dependence = std::max(std::min(std::exp(-thermal_viscosity_exponent*delta_temp/reference_T),1e2),1e-2);
+
+          if (std::isnan(temperature_dependence))
+            temperature_dependence = 1.0;
+
+          switch (composition.size())
+            {
+              case 0:
+                out.viscosities[i] = temperature_dependence * eta;
+                break;
+              case 1:
+                // geometric interpolation
+                out.viscosities[i] = (pow(10, ((1-composition[0]) * log10(eta*temperature_dependence)
+                                               + composition[0] * log10(eta*composition_viscosity_prefactor_1*temperature_dependence))));
+                break;
+              default:
+                out.viscosities[i] = (pow(10, ((1 - 0.5*composition[0] - 0.5*composition[1]) * log10(eta*temperature_dependence)
+                                               + 0.5 * composition[0] * log10(eta*composition_viscosity_prefactor_1*temperature_dependence)
+                                               + 0.5 * composition[1] * log10(eta*composition_viscosity_prefactor_2*temperature_dependence))));
+                break;
+            }
+
+          const double c1 = composition.size()>0?
+                            std::max(0.0, composition[0])
+                            :
+                            0.0;
+          const double c2 = composition.size()>1?
+                            std::max(0.0, composition[1])
+                            :
+                            0.0;
+          out.densities[i] = reference_rho * (1 - thermal_alpha * (temperature - reference_T))
+                             + compositional_delta_rho_1 * c1 + compositional_delta_rho_2 * c2;
+
+
+          const double depth = this->get_geometry_model().depth(in.position[i]);
+          for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+            {
+              double delta_C = 0.0;
+              switch (c)
+                {
+                  case 0:
+                    if (depth < reaction_depth) delta_C = -composition[0];
+                    break;
+                  case 1:
+                    if (depth < reaction_depth) delta_C = composition[0];
+                    break;
+                  default:
+                    delta_C = 0.0;
+                    break;
+                }
+              out.reaction_terms[i][c] = delta_C;
+
+              // Fill reaction rate outputs instead of the reaction terms if we use operator splitting
+              // (and then set the latter to zero).
+              if (this->get_parameters().use_operator_splitting)
+                {
+                  if (reaction_rate_out != NULL)
+                    reaction_rate_out->reaction_rates[i][c] = (this->get_timestep_number() > 0
+                                                               ?
+                                                               out.reaction_terms[i][c] / this->get_timestep()
+                                                               :
+                                                               0.0);
+                  out.reaction_terms[i][c] = 0.0;
+                }
+            }
+
+          out.specific_heat[i] = reference_specific_heat;
+          out.thermal_conductivities[i] = k_value;
+          out.thermal_expansion_coefficients[i] = thermal_alpha;
+          out.compressibilities[i] = 0.0;
         }
     }
-
 
     template <int dim>
     double
@@ -69,194 +122,6 @@ namespace aspect
       return eta;
     }
 
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    reference_density () const
-    {
-      return reference_rho;
-    }
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    reference_thermal_expansion_coefficient () const
-    {
-      return thermal_alpha;
-    }
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    specific_heat (const double,
-                   const double,
-                   const std::vector<double> &, /*composition*/
-                   const Point<dim> &) const
-    {
-      return reference_specific_heat;
-    }
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    reference_cp () const
-    {
-      return reference_specific_heat;
-    }
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    thermal_conductivity (const double,
-                          const double,
-                          const std::vector<double> &, /*composition*/
-                          const Point<dim> &) const
-    {
-      return k_value;
-    }
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    reference_thermal_diffusivity () const
-    {
-      return k_value/(reference_rho*reference_specific_heat);
-    }
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    density (const double temperature,
-             const double,
-             const std::vector<double> &compositional_fields, /*composition*/
-             const Point<dim> &) const
-    {
-      const double c1 = compositional_fields.size()>0?
-                        std::max(0.0, compositional_fields[0])
-                        :
-                        0.0;
-      const double c2 = compositional_fields.size()>1?
-                        std::max(0.0, compositional_fields[1])
-                        :
-                        0.0;
-      return reference_rho * (1 - thermal_alpha * (temperature - reference_T))
-             + compositional_delta_rho_1 * c1 + compositional_delta_rho_2 * c2;
-    }
-
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    thermal_expansion_coefficient (const double,
-                                   const double,
-                                   const std::vector<double> &, /*composition*/
-                                   const Point<dim> &) const
-    {
-      return thermal_alpha;
-    }
-
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    compressibility (const double,
-                     const double,
-                     const std::vector<double> &, /*composition*/
-                     const Point<dim> &) const
-    {
-      return 0.0;
-    }
-
-
-    template <int dim>
-    double
-    CompositionReaction<dim>::
-    reaction_term (const double,
-                   const double,
-                   const std::vector<double> &compositional_fields,
-                   const Point<dim> &position,
-                   const unsigned int compositional_variable) const
-    {
-      const double depth = this->get_geometry_model().depth(position);
-      double delta_C = 0.0;
-      switch (compositional_variable)
-        {
-          case 0:
-            if (depth < reaction_depth) delta_C = -compositional_fields[0];
-            break;
-          case 1:
-            if (depth < reaction_depth) delta_C = compositional_fields[0];
-            break;
-          default:
-            delta_C = 0.0;
-            break;
-        }
-      return delta_C;
-    }
-
-
-    template <int dim>
-    bool
-    CompositionReaction<dim>::
-    viscosity_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      // compare this with the implementation of the viscosity() function
-      // to see the dependencies
-      if (((dependence & NonlinearDependence::temperature) != NonlinearDependence::none)
-          &&
-          (thermal_viscosity_exponent != 0))
-        return true;
-      else if (((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none)
-               &&
-               (composition_viscosity_prefactor_1 != 1.0 || composition_viscosity_prefactor_2 != 1.0))
-        return true;
-      else
-        return false;
-    }
-
-
-    template <int dim>
-    bool
-    CompositionReaction<dim>::
-    density_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      // compare this with the implementation of the density() function
-      // to see the dependencies
-      if (((dependence & NonlinearDependence::temperature) != NonlinearDependence::none)
-          &&
-          (thermal_alpha != 0))
-        return true;
-      else if (((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none)
-               &&
-               (compositional_delta_rho_1 != 0 || compositional_delta_rho_2 != 0))
-        return true;
-      else
-        return false;
-    }
-
-    template <int dim>
-    bool
-    CompositionReaction<dim>::
-    compressibility_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    CompositionReaction<dim>::
-    specific_heat_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    CompositionReaction<dim>::
-    thermal_conductivity_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
 
 
     template <int dim>
@@ -305,7 +170,7 @@ namespace aspect
                              "Units: $W/m/K$.");
           prm.declare_entry ("Reference specific heat", "1250",
                              Patterns::Double (0),
-                             "The value of the specific heat $cp$. "
+                             "The value of the specific heat $C_p$. "
                              "Units: $J/kg/K$.");
           prm.declare_entry ("Thermal expansion coefficient", "2e-5",
                              Patterns::Double (0),
@@ -373,6 +238,40 @@ namespace aspect
         prm.leave_subsection();
       }
       prm.leave_subsection();
+
+      // Declare dependencies on solution variables
+      this->model_dependence.viscosity = NonlinearDependence::none;
+      this->model_dependence.density = NonlinearDependence::none;
+      this->model_dependence.compressibility = NonlinearDependence::none;
+      this->model_dependence.specific_heat = NonlinearDependence::none;
+      this->model_dependence.thermal_conductivity = NonlinearDependence::none;
+
+      if (thermal_viscosity_exponent != 0)
+        this->model_dependence.viscosity |= NonlinearDependence::temperature;
+      if ((composition_viscosity_prefactor_1 != 1.0) ||
+          (composition_viscosity_prefactor_2 != 1.0))
+        this->model_dependence.viscosity |= NonlinearDependence::compositional_fields;
+
+      if (thermal_alpha != 0)
+        this->model_dependence.density |= NonlinearDependence::temperature;
+      if ((compositional_delta_rho_1 != 0) ||
+          (compositional_delta_rho_2 != 0))
+        this->model_dependence.density |= NonlinearDependence::compositional_fields;
+    }
+
+
+    template <int dim>
+    void
+    CompositionReaction<dim>::create_additional_named_outputs (MaterialModel::MaterialModelOutputs<dim> &out) const
+    {
+      if (this->get_parameters().use_operator_splitting
+          && out.template get_additional_output<ReactionRateOutputs<dim> >() == NULL)
+        {
+          const unsigned int n_points = out.viscosities.size();
+          out.additional_outputs.push_back(
+            std_cxx11::shared_ptr<MaterialModel::AdditionalMaterialOutputs<dim> >
+            (new MaterialModel::ReactionRateOutputs<dim> (n_points, this->n_compositional_fields())));
+        }
     }
   }
 }

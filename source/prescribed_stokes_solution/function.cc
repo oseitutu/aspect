@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,7 +14,7 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
@@ -37,7 +37,7 @@ namespace aspect
     void
     Function<dim>::stokes_solution (const Point<dim> &position, Vector<double> &value) const
     {
-      //velocity
+      // velocity
       for (unsigned int d=0; d<dim; ++d)
         value[d] = prescribed_velocity_function.value(position,d);
 
@@ -98,9 +98,11 @@ namespace aspect
         catch (...)
           {
             std::cerr << "ERROR: FunctionParser failed to parse\n"
-                      << "\t'Initial conditions.Function'\n"
+                      << "\t'Initial conditions.Function.Velocity function'\n"
                       << "with expression\n"
-                      << "\t'" << prm.get("Function expression") << "'";
+                      << "\t'" << prm.get("Function expression") << "'"
+                      << "More information about the cause of the parse error \n"
+                      << "is shown below.\n";
             throw;
           }
         prm.leave_subsection();
@@ -112,9 +114,11 @@ namespace aspect
         catch (...)
           {
             std::cerr << "ERROR: FunctionParser failed to parse\n"
-                      << "\t'Initial conditions.Function'\n"
+                      << "\t'Initial conditions.Function.Pressure function'\n"
                       << "with expression\n"
-                      << "\t'" << prm.get("Function expression") << "'";
+                      << "\t'" << prm.get("Function expression") << "'"
+                      << "More information about the cause of the parse error \n"
+                      << "is shown below.\n";
             throw;
           }
         prm.leave_subsection();

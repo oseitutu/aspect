@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,14 +14,15 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
 #include <aspect/postprocess/visualization.h>
-#include <aspect/simulator_access.h>
 #include <aspect/global.h>
+#include <aspect/utilities.h>
+#include <aspect/simulator_access.h>
 
 #include <deal.II/dofs/dof_tools.h>
 #include <deal.II/numerics/data_out.h>
@@ -51,25 +52,38 @@ namespace aspect
         public:
           virtual
           void
-          compute_derived_quantities_vector (const std::vector<Vector<double> >              &uh,
-                                             const std::vector<std::vector<Tensor<1,dim> > > &,
-                                             const std::vector<std::vector<Tensor<2,dim> > > &,
-                                             const std::vector<Point<dim> > &,
-                                             const std::vector<Point<dim> > &,
-                                             std::vector<Vector<double> >                    &computed_quantities) const
+          evaluate_vector_field(const DataPostprocessorInputs::Vector<dim> &input_data,
+                                std::vector<Vector<double> > &computed_quantities) const
           {
             const double velocity_scaling_factor =
               this->convert_output_to_years() ? year_in_seconds : 1.0;
-            const unsigned int n_q_points = uh.size();
+            const unsigned int n_q_points = input_data.solution_values.size();
             for (unsigned int q=0; q<n_q_points; ++q)
               for (unsigned int i=0; i<computed_quantities[q].size(); ++i)
-                computed_quantities[q][i]=uh[q][i] * ((i < dim) ? velocity_scaling_factor : 1.0);
+                {
+                  // scale velocities and fluid velocities by year_in_seconds if needed
+                  if (this->introspection().component_masks.velocities[i] ||
+                      (this->include_melt_transport()
+                       && this->introspection().variable("fluid velocity").component_mask[i]))
+                    computed_quantities[q][i] = input_data.solution_values[q][i] * velocity_scaling_factor;
+                  else
+                    computed_quantities[q][i] = input_data.solution_values[q][i];
+                }
           }
 
           virtual std::vector<std::string> get_names () const
           {
             std::vector<std::string> solution_names (dim, "velocity");
+
+            if (this->include_melt_transport())
+              {
+                solution_names.push_back ("p_f");
+                solution_names.push_back ("p_c");
+                for (unsigned int i=0; i<dim; ++i)
+                  solution_names.push_back ("u_f");
+              }
             solution_names.push_back ("p");
+
             solution_names.push_back ("T");
             for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
               solution_names.push_back (this->introspection().name_for_compositional_index(c));
@@ -84,8 +98,15 @@ namespace aspect
             std::vector<DataComponentInterpretation::DataComponentInterpretation>
             interpretation (dim,
                             DataComponentInterpretation::component_is_part_of_vector);
-            interpretation.push_back (DataComponentInterpretation::component_is_scalar);
-            interpretation.push_back (DataComponentInterpretation::component_is_scalar);
+            if (this->include_melt_transport())
+              {
+                interpretation.push_back (DataComponentInterpretation::component_is_scalar);
+                interpretation.push_back (DataComponentInterpretation::component_is_scalar);
+                for (unsigned int i=0; i<dim; ++i)
+                  interpretation.push_back (DataComponentInterpretation::component_is_part_of_vector);
+              }
+            interpretation.push_back (DataComponentInterpretation::component_is_scalar); // p
+            interpretation.push_back (DataComponentInterpretation::component_is_scalar); // T
             for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
               interpretation.push_back (DataComponentInterpretation::component_is_scalar);
 
@@ -97,6 +118,35 @@ namespace aspect
             return update_values;
           }
       };
+
+      /**
+       * This Postprocessor will generate the output variables of mesh velocity
+       * for when a free surface is used.
+       */
+      template <int dim>
+      class FreeSurfacePostprocessor: public DataPostprocessorVector< dim >, public SimulatorAccess<dim>
+      {
+        public:
+          FreeSurfacePostprocessor ()
+            : DataPostprocessorVector<dim>( "mesh_velocity", UpdateFlags(update_values) )
+          {}
+
+          virtual
+          void
+          evaluate_vector_field(const DataPostprocessorInputs::Vector<dim> &input_data,
+                                std::vector<Vector<double> > &computed_quantities) const
+          {
+            // check that the first quadrature point has dim components
+            Assert( computed_quantities[0].size() == dim,
+                    ExcMessage("Unexpected dimension in mesh velocity postprocessor"));
+            const double velocity_scaling_factor =
+              this->convert_output_to_years() ? year_in_seconds : 1.0;
+            const unsigned int n_q_points = input_data.solution_values.size();
+            for (unsigned int q=0; q<n_q_points; ++q)
+              for (unsigned int i=0; i<dim; ++i)
+                computed_quantities[q][i] = input_data.solution_values[q][i] * velocity_scaling_factor;
+          }
+      };
     }
 
 
@@ -106,6 +156,12 @@ namespace aspect
 
       template <int dim>
       Interface<dim>::~Interface ()
+      {}
+
+
+      template <int dim>
+      void
+      Interface<dim>::initialize ()
       {}
 
 
@@ -153,7 +209,7 @@ namespace aspect
       // initialize this to a nonsensical value; set it to the actual time
       // the first time around we get to check it
       last_output_time (std::numeric_limits<double>::quiet_NaN()),
-      output_file_number (0),
+      output_file_number (numbers::invalid_unsigned_int),
       mesh_changed (true)
     {}
 
@@ -188,33 +244,76 @@ namespace aspect
       const std::string
       pvtu_master_filename = (solution_file_prefix +
                               ".pvtu");
-      std::ofstream pvtu_master ((this->get_output_directory() +
+      std::ofstream pvtu_master ((this->get_output_directory() + "solution/" +
                                   pvtu_master_filename).c_str());
       data_out.write_pvtu_record (pvtu_master, filenames);
 
       // now also generate a .pvd file that matches simulation
       // time and corresponding .pvtu record
-      times_and_pvtu_names.push_back(std::make_pair
-                                     (time_in_years_or_seconds, pvtu_master_filename));
+      if (this->get_parameters().run_postprocessors_on_nonlinear_iterations)
+        {
+          // in case we output all nonlinear iterations, we only want one
+          // entry per time step, so replace the last line with the current iteration
+          if (this->get_nonlinear_iteration() == 0)
+            times_and_pvtu_names.push_back(std::make_pair
+                                           (time_in_years_or_seconds, "solution/"+pvtu_master_filename));
+          else
+            times_and_pvtu_names.back() = (std::make_pair
+                                           (time_in_years_or_seconds, "solution/"+pvtu_master_filename));
+        }
+      else
+        times_and_pvtu_names.push_back(std::make_pair
+                                       (time_in_years_or_seconds, "solution/"+pvtu_master_filename));
+
       const std::string
       pvd_master_filename = (this->get_output_directory() + "solution.pvd");
       std::ofstream pvd_master (pvd_master_filename.c_str());
-      data_out.write_pvd_record (pvd_master, times_and_pvtu_names);
+
+      DataOutBase::write_pvd_record (pvd_master, times_and_pvtu_names);
 
       // finally, do the same for Visit via the .visit file for this
       // time step, as well as for all time steps together
       const std::string
-      visit_master_filename = (this->get_output_directory() +
-                               solution_file_prefix +
-                               ".visit");
+      visit_master_filename = (this->get_output_directory()
+                               + "solution/"
+                               + solution_file_prefix
+                               + ".visit");
       std::ofstream visit_master (visit_master_filename.c_str());
-      data_out.write_visit_record (visit_master, filenames);
 
-      output_file_names_by_timestep.push_back (filenames);
+      DataOutBase::write_visit_record (visit_master, filenames);
+
+      {
+        // the global .visit file needs the relative path because it sits a
+        // directory above
+        std::vector<std::string> filenames_with_path;
+        for (std::vector<std::string>::const_iterator it = filenames.begin();
+             it != filenames.end();
+             ++it)
+          {
+            filenames_with_path.push_back("solution/" + (*it));
+          }
+
+        if (this->get_parameters().run_postprocessors_on_nonlinear_iterations)
+          {
+            // in case we output all nonlinear iterations, we only want one
+            // entry per time step, so replace the last line with the current iteration
+            if (this->get_nonlinear_iteration() == 0)
+              output_file_names_by_timestep.push_back (filenames_with_path);
+            else
+              output_file_names_by_timestep.back() = filenames_with_path;
+          }
+        else
+          output_file_names_by_timestep.push_back (filenames_with_path);
+      }
 
       std::ofstream global_visit_master ((this->get_output_directory() +
                                           "solution.visit").c_str());
-      data_out.write_visit_record (global_visit_master, output_file_names_by_timestep);
+
+      std::vector<std::pair<double, std::vector<std::string> > > times_and_output_file_names;
+      for (unsigned int timestep=0; timestep<times_and_pvtu_names.size(); ++timestep)
+        times_and_output_file_names.push_back(std::make_pair(times_and_pvtu_names[timestep].first,
+                                                             output_file_names_by_timestep[timestep]));
+      DataOutBase::write_visit_record (global_visit_master, times_and_output_file_names);
     }
 
     template <int dim>
@@ -230,12 +329,23 @@ namespace aspect
         }
 
       // return if graphical output is not requested at this time
-      if (this->get_time() < last_output_time + output_interval)
+      if ((this->get_time() < last_output_time + output_interval)
+          && (this->get_timestep_number() != 0))
         return std::pair<std::string,std::string>();
 
+      // up the counter of the number of the file by one, but not in
+      // the very first output step. if we run postprocessors on all
+      // iterations, only increase file number in the first nonlinear iteration
+      const bool increase_file_number = (this->get_nonlinear_iteration() == 0) || (!this->get_parameters().run_postprocessors_on_nonlinear_iterations);
+      if (output_file_number == numbers::invalid_unsigned_int)
+        output_file_number = 0;
+      else if (increase_file_number)
+        ++output_file_number;
 
       internal::BaseVariablePostprocessor<dim> base_variables;
-      dynamic_cast<SimulatorAccess<dim>*>(&base_variables)->initialize(this->get_simulator());
+      base_variables.initialize_simulator (this->get_simulator());
+
+      std_cxx1x::shared_ptr<internal::FreeSurfacePostprocessor<dim> > free_surface_variables;
 
       // create a DataOut object on the heap; ownership of this
       // object will later be transferred to a different thread
@@ -243,12 +353,17 @@ namespace aspect
       // will then also destroy the object
       DataOut<dim> data_out;
       data_out.attach_dof_handler (this->get_dof_handler());
-
-
-
       data_out.add_data_vector (this->get_solution(),
                                 base_variables);
 
+      // If there is a free surface, also attach the mesh velocity object
+      if ( this->get_free_surface_boundary_indicators().empty() == false && output_mesh_velocity)
+        {
+          free_surface_variables.reset( new internal::FreeSurfacePostprocessor<dim>);
+          free_surface_variables->initialize_simulator(this->get_simulator());
+          data_out.add_data_vector (this->get_mesh_velocity(),
+                                    *free_surface_variables);
+        }
 
       // then for each additional selected output variable
       // add the computed quantity as well. keep a list of
@@ -338,29 +453,42 @@ namespace aspect
 
         }
 
-      // now build the patches and see how we can output these
-      data_out.build_patches ((interpolate_output) ?
-                              this->get_stokes_velocity_degree()
-                              :
-                              0);
+      // Now build the patches. If selected, increase the output resolution.
+      if (interpolate_output)
+        {
+          data_out.build_patches (this->get_mapping(),
+                                  this->get_stokes_velocity_degree(),
+                                  this->get_geometry_model().has_curved_elements()
+                                  ?
+                                  DataOut<dim>::curved_inner_cells
+                                  :
+                                  DataOut<dim>::no_curved_cells);
+        }
+      else
+        data_out.build_patches(this->get_mapping()); // Giving the mapping ensures that the case with mesh deformation works correctly.
 
+      // Now prepare everything for writing the output and choose output format
       std::string solution_file_prefix = "solution-" + Utilities::int_to_string (output_file_number, 5);
-      std::string mesh_file_prefix = "mesh-" + Utilities::int_to_string (output_file_number, 5);
+      if (this->get_parameters().run_postprocessors_on_nonlinear_iterations)
+        solution_file_prefix.append("." + Utilities::int_to_string (this->get_nonlinear_iteration(), 4));
+
       const double time_in_years_or_seconds = (this->convert_output_to_years() ?
                                                this->get_time() / year_in_seconds :
                                                this->get_time());
       if (output_format=="hdf5")
         {
           XDMFEntry new_xdmf_entry;
-          std::string     h5_solution_file_name = solution_file_prefix + ".h5";
-          std::string     xdmf_filename = this->get_output_directory() + "solution.xdmf";
+          const std::string h5_solution_file_name = "solution/" + solution_file_prefix + ".h5";
+          const std::string xdmf_filename = "solution.xdmf";
 
           // Filter redundant values
-          DataOutBase::DataOutFilter   data_filter(DataOutBase::DataOutFilterFlags(true, true));
+          DataOutBase::DataOutFilter data_filter(DataOutBase::DataOutFilterFlags(true, true));
 
           // If the mesh changed since the last output, make a new mesh file
+          const std::string mesh_file_prefix = "mesh-" + Utilities::int_to_string (output_file_number, 5);
           if (mesh_changed)
-            last_mesh_file_name = mesh_file_prefix + ".h5";
+            last_mesh_file_name = "solution/" + mesh_file_prefix + ".h5";
+
           data_out.write_filtered_data(data_filter);
           data_out.write_hdf5_parallel(data_filter,
                                        mesh_changed,
@@ -373,227 +501,204 @@ namespace aspect
                                                       time_in_years_or_seconds,
                                                       this->get_mpi_communicator());
           xdmf_entries.push_back(new_xdmf_entry);
-          data_out.write_xdmf_file(xdmf_entries, xdmf_filename.c_str(),
+          data_out.write_xdmf_file(xdmf_entries, this->get_output_directory() + xdmf_filename,
                                    this->get_mpi_communicator());
           mesh_changed = false;
         }
-      else if ((output_format=="vtu") && (group_files!=0))
+      else if (output_format=="vtu")
         {
-          if (group_files == 1)
-            data_out.write_vtu_in_parallel((this->get_output_directory() + solution_file_prefix +
-                                            ".0000.vtu").c_str(),
-                                           this->get_mpi_communicator());
+          // Write master files (.pvtu,.pvd,.visit) on the master process
+          const int my_id = Utilities::MPI::this_mpi_process(this->get_mpi_communicator());
+
+          if (my_id == 0)
+            {
+              std::vector<std::string> filenames;
+              const unsigned int n_processes = Utilities::MPI::n_mpi_processes(this->get_mpi_communicator());
+              const unsigned int n_files = (group_files == 0) ? n_processes : std::min(group_files,n_processes);
+              for (unsigned int i=0; i<n_files; ++i)
+                filenames.push_back (solution_file_prefix
+                                     + "." + Utilities::int_to_string(i, 4)
+                                     + ".vtu");
+              write_master_files (data_out, solution_file_prefix, filenames);
+            }
+
+          const unsigned int n_processes = Utilities::MPI::n_mpi_processes(this->get_mpi_communicator());
+
+          const unsigned int my_file_id = (group_files == 0
+                                           ?
+                                           my_id
+                                           :
+                                           my_id % group_files);
+          const std::string filename = this->get_output_directory()
+                                       + "solution/"
+                                       + solution_file_prefix
+                                       + "."
+                                       + Utilities::int_to_string (my_file_id, 4)
+                                       + ".vtu";
+
+          // pass time step number and time as metadata into the output file
+          DataOutBase::VtkFlags vtk_flags;
+          vtk_flags.cycle = this->get_timestep_number();
+          vtk_flags.time = time_in_years_or_seconds;
+
+          data_out.set_flags (vtk_flags);
+
+          // Write as many files as processes. For this case we support writing in a
+          // background thread and to a temporary location, so we first write everything
+          // into a string that is written to disk in a writer function
+          if ((group_files == 0) || (group_files >= n_processes))
+            {
+              // Put the content we want to write into a string object that
+              // we can then write in the background
+              const std::string *file_contents;
+              {
+                std::ostringstream tmp;
+
+                data_out.write (tmp, DataOutBase::parse_output_format(output_format));
+                file_contents = new std::string (tmp.str());
+              }
+
+              if (write_in_background_thread)
+                {
+                  // Wait for all previous write operations to finish, should
+                  // any be still active,
+                  background_thread.join ();
+
+                  // then continue with writing our own data.
+                  background_thread = Threads::new_thread (&writer,
+                                                           filename,
+                                                           temporary_output_location,
+                                                           file_contents);
+                }
+              else
+                writer(filename,temporary_output_location,file_contents);
+            }
+          // Just write one data file in parallel
+          else if (group_files == 1)
+            {
+              data_out.write_vtu_in_parallel(filename.c_str(),
+                                             this->get_mpi_communicator());
+            }
+          // Write as many output files as 'group_files' groups
           else
             {
-              int myid = Utilities::MPI::this_mpi_process(this->get_mpi_communicator());
-              int color = myid % group_files;
+              int color = my_id % group_files;
+
               MPI_Comm comm;
-              MPI_Comm_split(this->get_mpi_communicator(), color, myid, &comm);
-              data_out.write_vtu_in_parallel((this->get_output_directory() + solution_file_prefix +
-                                              "." + Utilities::int_to_string(color, 4)
-                                              + ".vtu").c_str(),
-                                             comm);
+              MPI_Comm_split(this->get_mpi_communicator(), color, my_id, &comm);
+
+              data_out.write_vtu_in_parallel(filename.c_str(), comm);
               MPI_Comm_free(&comm);
             }
-
-          if (Utilities::MPI::this_mpi_process(this->get_mpi_communicator()) == 0)
-            {
-              std::vector<std::string> filenames;
-              {
-                const unsigned int size = Utilities::MPI::n_mpi_processes(this->get_mpi_communicator());
-                const unsigned int n_files = (group_files>size)?size:group_files;
-                for (unsigned int i=0; i<n_files; ++i)
-                  filenames.push_back (solution_file_prefix
-                                       + "." + Utilities::int_to_string(i, 4)
-                                       + ".vtu");
-              }
-              write_master_files (data_out, solution_file_prefix, filenames);
-            }
         }
+      // Write in a different format than hdf5 or vtu. This case is supported, but is not
+      // optimized for parallel output in that every process will write one file directly
+      // into the output directory. This may or may not affect performance depending on
+      // the model setup and the network file system type.
       else
         {
-          // put the stuff we want to write into a string object that
-          // we can then write in the background
-          const std::string *file_contents;
-          {
-            std::ostringstream tmp;
+          const unsigned int myid = Utilities::MPI::this_mpi_process(this->get_mpi_communicator());
 
-            // pass time step number and time as metadata into the output file
-            DataOutBase::VtkFlags vtk_flags;
-            vtk_flags.cycle = this->get_timestep_number();
-            vtk_flags.time = time_in_years_or_seconds;
+          const std::string filename = this->get_output_directory()
+                                       + "solution/"
+                                       + solution_file_prefix
+                                       + "."
+                                       +  Utilities::int_to_string (myid, 4)
+                                       + DataOutBase::default_suffix
+                                       (DataOutBase::parse_output_format(output_format));
 
-            data_out.set_flags (vtk_flags);
+          std::ofstream out (filename.c_str());
 
-            data_out.write (tmp, DataOutBase::parse_output_format(output_format));
-            file_contents = new std::string (tmp.str());
-          }
+          AssertThrow(out,
+                      ExcMessage("Unable to open file for writing: " + filename +"."));
 
-          // let the master processor write the master record for all the distributed
-          // files
-          if (Utilities::MPI::this_mpi_process(this->get_mpi_communicator()) == 0)
-            {
-              std::vector<std::string> filenames;
-              for (unsigned int i=0; i<Utilities::MPI::n_mpi_processes(this->get_mpi_communicator()); ++i)
-                filenames.push_back (solution_file_prefix +
-                                     "." +
-                                     Utilities::int_to_string(i, 4) +
-                                     DataOutBase::default_suffix
-                                     (DataOutBase::parse_output_format(output_format)));
-
-              write_master_files (data_out, solution_file_prefix, filenames);
-            }
-
-          const std::string *filename
-            = new std::string (this->get_output_directory() +
-                               solution_file_prefix +
-                               "." +
-                               Utilities::int_to_string
-                               (this->get_triangulation().locally_owned_subdomain(), 4) +
-                               DataOutBase::default_suffix
-                               (DataOutBase::parse_output_format(output_format)));
-
-          // wait for all previous write operations to finish, should
-          // any be still active
-          background_thread.join ();
-
-          // then continue with writing our own stuff
-          background_thread = Threads::new_thread (&background_writer,
-                                                   filename,
-                                                   file_contents);
+          data_out.write (out, DataOutBase::parse_output_format(output_format));
         }
 
       // record the file base file name in the output file
       statistics.add_value ("Visualization file name",
-                            this->get_output_directory() + solution_file_prefix);
+                            this->get_output_directory()
+                            + "solution/"
+                            + solution_file_prefix);
 
-      // up the counter of the number of the file by one; also
       // up the next time we need output
-      ++output_file_number;
       set_last_output_time (this->get_time());
 
       // return what should be printed to the screen.
       return std::make_pair (std::string ("Writing graphical output:"),
-                             this->get_output_directory() + solution_file_prefix);
+                             this->get_output_directory()
+                             + "solution/"
+                             + solution_file_prefix);
     }
 
 
     template <int dim>
-    void Visualization<dim>::background_writer (const std::string *filename,
-                                                const std::string *file_contents)
+    void Visualization<dim>::writer (const std::string filename,
+                                     const std::string temporary_output_location,
+                                     const std::string *file_contents)
     {
-      // write stuff into a (hopefully local) tmp file first. to do so first
-      // find out whether $TMPDIR is set and if so put the file in there
-      std::string tmp_filename;
-
-      int tmp_file_desc = -1;
-
-      {
-        // Try getting the environment variable for the temporary directory
-        const char *tmp_filedir = getenv("TMPDIR");
-        // If we can't, default to /tmp
-        if (tmp_filedir)
-          tmp_filename = tmp_filedir;
-        else
-          tmp_filename = "/tmp";
-        tmp_filename += "/aspect.tmp.XXXXXX";
-
-        // Create the temporary file; get at the actual filename
-        // by using a C-style string that mkstemp will then overwrite
-        char *tmp_filename_x = new char[tmp_filename.size()+1];
-        std::strcpy(tmp_filename_x, tmp_filename.c_str());
-        tmp_file_desc = mkstemp(tmp_filename_x);
-        tmp_filename = tmp_filename_x;
-        delete []tmp_filename_x;
-
-        // If we failed to create the temp file, just write directly to the target file.
-        // We also provide a warning about this fact. There are places where
-        // this fails *on every node*, so we will get a lot of warning messages
-        // into the output; in these cases, just writing multiple pieces to
-        // std::cerr will produce an unreadable mass of text; rather, first
-        // assemble the error message completely, and then output it atomically
-        if (tmp_file_desc == -1)
-          {
-            const std::string x = ("***** WARNING: could not create temporary file <"
-                                   +
-                                   tmp_filename
-                                   +
-                                   ">, will output directly to final location. This may negatively "
-                                   "affect performance. (On processor "
-                                   + Utilities::int_to_string(Utilities::MPI::this_mpi_process (MPI_COMM_WORLD))
-                                   + ".)\n");
-
-            std::cerr << x << std::flush;
-
-            tmp_filename = *filename;
-          }
-      }
-
-      // open the file. if we can't open it, abort if this is the "real"
-      // file. re-try with the "real" file if we had tried to write to
-      // a temporary file
-    re_try_with_non_tmp_file:
-      std::ofstream out (tmp_filename.c_str());
-      if (!out)
+      std::string tmp_filename = filename;
+      if (temporary_output_location != "")
         {
-          if (tmp_filename == *filename)
-            AssertThrow (false, ExcMessage(std::string("Trying to write to file <") +
-                                           *filename +
-                                           ">, but the file can't be opened!"))
-            else
-              {
-                tmp_filename = *filename;
-                goto re_try_with_non_tmp_file;
-              }
+          tmp_filename = temporary_output_location + "/aspect.tmp.XXXXXX";
+
+          // Create the temporary file; get at the actual filename
+          // by using a C-style string that mkstemp will then overwrite
+          char *tmp_filename_x = new char[tmp_filename.size()+1];
+          std::strcpy(tmp_filename_x, tmp_filename.c_str());
+          int tmp_file_desc = mkstemp(tmp_filename_x);
+          tmp_filename = tmp_filename_x;
+          delete []tmp_filename_x;
+
+          // If we failed to create the temp file, just write directly to the target file.
+          // We also provide a warning about this fact. There are places where
+          // this fails *on every node*, so we will get a lot of warning messages
+          // into the output; in these cases, just writing multiple pieces to
+          // std::cerr will produce an unreadable mass of text; rather, first
+          // assemble the error message completely, and then output it atomically
+          if (tmp_file_desc == -1)
+            {
+              const std::string x = ("***** WARNING: could not create temporary file <"
+                                     +
+                                     tmp_filename
+                                     +
+                                     ">, will output directly to final location. This may negatively "
+                                     "affect performance. (On processor "
+                                     + Utilities::int_to_string(Utilities::MPI::this_mpi_process (MPI_COMM_WORLD))
+                                     + ".)\n");
+
+              std::cerr << x << std::flush;
+
+              tmp_filename = filename;
+            }
+          else
+            close(tmp_file_desc);
         }
+
+      std::ofstream out(tmp_filename.c_str());
+
+      AssertThrow (out, ExcMessage(std::string("Trying to write to file <") +
+                                   filename +
+                                   ">, but the file can't be opened!"))
 
       // now write and then move the tmp file to its final destination
       // if necessary
       out << *file_contents;
       out.close ();
-      if (tmp_file_desc != -1)
+
+      if (tmp_filename != filename)
         {
-          close(tmp_file_desc);
-          tmp_file_desc = -1;
-        }
-
-      if (tmp_filename != *filename)
-        {
-          std::string command = std::string("mv ") + tmp_filename + " " + *filename;
-
-          bool first_attempt = true;
-
-        re_try:
+          std::string command = std::string("mv ") + tmp_filename + " " + filename;
           int error = system(command.c_str());
 
-          // if the move failed, and this is the first time, sleep for a second in
-          // hopes that it was just an NFS timeout, then try again. if it fails the
-          // second time around, try writing to the final file directly.
-          if (error != 0)
-            {
-              if (first_attempt == true)
-                {
-                  first_attempt = false;
-                  sleep (1);
-                  goto re_try;
-                }
-              else
-                {
-                  std::cerr << "***** WARNING: could not move " << tmp_filename
-                            << " to " << *filename << ". Trying again to write directly to "
-                            << *filename
-                            << ". (On processor "
-                            << Utilities::MPI::this_mpi_process (MPI_COMM_WORLD) << ".)"
-                            << std::endl;
-                  tmp_filename = *filename;
-                  goto re_try_with_non_tmp_file;
-                }
-            }
+          AssertThrow(error == 0,
+                      ExcMessage("Could not move " + tmp_filename + " to "
+                                 + filename + ". On processor "
+                                 + Utilities::int_to_string(Utilities::MPI::this_mpi_process (MPI_COMM_WORLD)) + "."));
         }
 
-      // destroy the pointers to the data we needed to write
+      // destroy the pointer to the data we needed to write
       delete file_contents;
-      delete filename;
     }
 
 
@@ -603,7 +708,7 @@ namespace aspect
       <void *,
       void *,
       aspect::internal::Plugins::PluginList<VisualizationPostprocessors::Interface<2> >,
-      aspect::internal::Plugins::PluginList<VisualizationPostprocessors::Interface<3> > > registered_plugins;
+      aspect::internal::Plugins::PluginList<VisualizationPostprocessors::Interface<3> > > registered_visualization_plugins;
     }
 
 
@@ -629,16 +734,30 @@ namespace aspect
                              Patterns::Selection (DataOutBase::get_output_format_names ()),
                              "The file format to be used for graphical output.");
 
-          prm.declare_entry ("Number of grouped files", "0",
+          prm.declare_entry ("Number of grouped files", "16",
                              Patterns::Integer(0),
                              "VTU file output supports grouping files from several CPUs "
                              "into a given number of files using MPI I/O when writing on a parallel "
                              "filesystem. Select 0 for no grouping. This will disable "
-                             "parallel file output and instead write one file per processor "
-                             "in a background thread. "
+                             "parallel file output and instead write one file per processor. "
                              "A value of 1 will generate one big file containing the whole "
                              "solution, while a larger value will create that many files "
-                             "(at most as many as there are mpi ranks).");
+                             "(at most as many as there are MPI ranks).");
+
+          prm.declare_entry ("Write in background thread", "false",
+                             Patterns::Bool(),
+                             "File operations can potentially take a long time, blocking the "
+                             "progress of the rest of the model run. Setting this variable to "
+                             "`true' moves this process into a background thread, while the "
+                             "rest of the model continues.");
+
+          prm.declare_entry ("Temporary output location", "",
+                             Patterns::Anything(),
+                             "On large clusters it can be advantageous to first write the "
+                             "output to a temporary file on a local file system and later "
+                             "move this file to a network file system. If this variable is "
+                             "set to a non-empty string it will be interpreted as a "
+                             "temporary storage location.");
 
           prm.declare_entry ("Interpolate output", "false",
                              Patterns::Bool(),
@@ -678,10 +797,17 @@ namespace aspect
                              "and a factor of 8 in 3d, when using quadratic elements for the velocity, "
                              "and correspondingly more for even higher order elements.");
 
+          prm.declare_entry ("Output mesh velocity", "false",
+                             Patterns::Bool(),
+                             "For free surface computations Aspect uses an Arbitrary-Lagrangian-"
+                             "Eulerian formulation to handle deforming the domain, so the mesh "
+                             "has its own velocity field.  This may be written as an output field "
+                             "by setting this parameter to true.");
+
           // finally also construct a string for Patterns::MultipleSelection that
           // contains the names of all registered visualization postprocessors
           const std::string pattern_of_names
-            = std_cxx11::get<dim>(registered_plugins).get_pattern_of_names ();
+            = std_cxx11::get<dim>(registered_visualization_plugins).get_pattern_of_names ();
           prm.declare_entry("List of output variables",
                             "",
                             Patterns::MultipleSelection(pattern_of_names),
@@ -698,7 +824,7 @@ namespace aspect
                             "to have in your output file.\n\n"
                             "The following postprocessors are available:\n\n"
                             +
-                            std_cxx11::get<dim>(registered_plugins).get_description_string());
+                            std_cxx11::get<dim>(registered_visualization_plugins).get_description_string());
         }
         prm.leave_subsection();
       }
@@ -706,7 +832,7 @@ namespace aspect
 
       // now declare the parameters of each of the registered
       // visualization postprocessors in turn
-      std_cxx11::get<dim>(registered_plugins).declare_parameters (prm);
+      std_cxx11::get<dim>(registered_visualization_plugins).declare_parameters (prm);
     }
 
 
@@ -714,9 +840,14 @@ namespace aspect
     void
     Visualization<dim>::parse_parameters (ParameterHandler &prm)
     {
-      Assert (std_cxx11::get<dim>(registered_plugins).plugins != 0,
+      Assert (std_cxx11::get<dim>(registered_visualization_plugins).plugins != 0,
               ExcMessage ("No postprocessors registered!?"));
       std::vector<std::string> viz_names;
+
+      std::string visualization_subdirectory = this->get_output_directory() + "solution/";
+      Utilities::create_directory (visualization_subdirectory,
+                                   this->get_mpi_communicator(),
+                                   true);
 
       prm.enter_subsection("Postprocess");
       {
@@ -726,12 +857,44 @@ namespace aspect
           if (this->convert_output_to_years())
             output_interval *= year_in_seconds;
 
+          if (output_interval > 0.0)
+            {
+              // since we increase the time indicating when to write the next graphical output
+              // every time we execute the visualization postprocessor, there is no good way to
+              // figure out when to write graphical output for the nonlinear iterations if we do
+              // not want to output every time step
+              AssertThrow(this->get_parameters().run_postprocessors_on_nonlinear_iterations == false,
+                          ExcMessage("Postprocessing nonlinear iterations is only supported if every time "
+                                     "step is visualized, or in other words, if the 'Time between graphical "
+                                     "output' in the Visualization postprocessor is set to zero."));
+            }
+
           output_format   = prm.get ("Output format");
           group_files     = prm.get_integer("Number of grouped files");
+          write_in_background_thread = prm.get_bool("Write in background thread");
+          temporary_output_location = prm.get("Temporary output location");
+
+          if (temporary_output_location != "")
+            {
+              // Check if a command-processor is available by calling system() with a
+              // null pointer. System is guaranteed to return non-zero if it finds
+              // a terminal and zero if there is none (like on the compute nodes of
+              // some cluster architectures, e.g. IBM BlueGene/Q)
+              AssertThrow(system((char *)0) != 0,
+                          ExcMessage("Usage of a temporary storage location is only supported if "
+                                     "there is a terminal available to move the files to their final location "
+                                     "after writing. The system() command did not succeed in finding such a terminal."));
+            }
+
           interpolate_output = prm.get_bool("Interpolate output");
+          output_mesh_velocity = prm.get_bool("Output mesh velocity");
 
           // now also see which derived quantities we are to compute
           viz_names = Utilities::split_string_list(prm.get("List of output variables"));
+          AssertThrow(Utilities::has_unique_entries(viz_names),
+                      ExcMessage("The list of strings for the parameter "
+                                 "'Postprocess/Visualization/List of output variables' contains entries more than once. "
+                                 "This is not allowed. Please check your parameter file."));
 
           // see if 'all' was selected (or is part of the list). if so
           // simply replace the list with one that contains all names
@@ -741,8 +904,8 @@ namespace aspect
             {
               viz_names.clear();
               for (typename std::list<typename aspect::internal::Plugins::PluginList<VisualizationPostprocessors::Interface<dim> >::PluginInfo>::const_iterator
-                   p = std_cxx11::get<dim>(registered_plugins).plugins->begin();
-                   p != std_cxx11::get<dim>(registered_plugins).plugins->end(); ++p)
+                   p = std_cxx11::get<dim>(registered_visualization_plugins).plugins->begin();
+                   p != std_cxx11::get<dim>(registered_visualization_plugins).plugins->end(); ++p)
                 viz_names.push_back (std_cxx11::get<0>(*p));
             }
         }
@@ -755,7 +918,7 @@ namespace aspect
       for (unsigned int name=0; name<viz_names.size(); ++name)
         {
           VisualizationPostprocessors::Interface<dim> *
-          viz_postprocessor = std_cxx11::get<dim>(registered_plugins)
+          viz_postprocessor = std_cxx11::get<dim>(registered_visualization_plugins)
                               .create_plugin (viz_names[name],
                                               "Visualization plugins");
 
@@ -776,9 +939,10 @@ namespace aspect
                                     (viz_postprocessor));
 
           if (SimulatorAccess<dim> *sim = dynamic_cast<SimulatorAccess<dim>*>(&*postprocessors.back()))
-            sim->initialize (this->get_simulator());
+            sim->initialize_simulator (this->get_simulator());
 
           postprocessors.back()->parse_parameters (prm);
+          postprocessors.back()->initialize ();
         }
 
       // Finally also set up a listener to check when the mesh changes
@@ -867,10 +1031,10 @@ namespace aspect
                                           void (*declare_parameters_function) (ParameterHandler &),
                                           VisualizationPostprocessors::Interface<dim> *(*factory_function) ())
     {
-      std_cxx11::get<dim>(registered_plugins).register_plugin (name,
-                                                               description,
-                                                               declare_parameters_function,
-                                                               factory_function);
+      std_cxx11::get<dim>(registered_visualization_plugins).register_plugin (name,
+                                                                             description,
+                                                                             declare_parameters_function,
+                                                                             factory_function);
     }
 
 
@@ -894,6 +1058,23 @@ namespace aspect
         }
 
       return requirements;
+    }
+
+
+
+    template <int dim>
+    void
+    Visualization<dim>::write_plugin_graph (std::ostream &out)
+    {
+      // in contrast to all other plugins, the visualization
+      // postprocessors do not actually connect to the central
+      // Simulator class, but they are a sub-system of
+      // the Postprocessor plugin system. indicate this
+      // through the last argument of the function call
+      std_cxx11::get<dim>(registered_visualization_plugins)
+      .write_plugin_graph ("Visualization postprocessor interface",
+                           out,
+                           typeid(Visualization<dim>).name());
     }
 
 

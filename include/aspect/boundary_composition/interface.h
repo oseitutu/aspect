@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2013 by the authors of the ASPECT code.
+  Copyright (C) 2013 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,13 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__boundary_composition_interface_h
-#define __aspect__boundary_composition_interface_h
+#ifndef _aspect_boundary_composition_interface_h
+#define _aspect_boundary_composition_interface_h
 
 #include <aspect/plugins.h>
 #include <aspect/geometry_model/interface.h>
@@ -79,27 +79,24 @@ namespace aspect
         update ();
 
         /**
-         * Return the composition that is to hold at a particular location on
+         * Return the composition that is to hold at a particular position on
          * the boundary of the domain.
          *
-         * @param geometry_model The geometry model that describes the domain.
-         * This may be used to determine whether the boundary composition
-         * model is implemented for this geometry.
          * @param boundary_indicator The boundary indicator of the part of the
          * boundary of the domain on which the point is located at which we
          * are requesting the composition.
-         * @param location The location of the point at which we ask for the
+         * @param position The position of the point at which we ask for the
          * composition.
-         * @param compositional_field The number of the compositional field
-         * for which we are requesting the composition.
          * @param compositional_field The index of the compositional field
          * between 0 and @p parameters.n_compositional_fields.
+         * @return Boundary value of the compositional field @p
+         * compositional_field at the position @p position.
          */
         virtual
-        double composition (const GeometryModel::Interface<dim> &geometry_model,
-                            const types::boundary_id             boundary_indicator,
-                            const Point<dim>                    &location,
-                            const unsigned int                   compositional_field) const = 0;
+        double
+        boundary_composition (const types::boundary_id boundary_indicator,
+                              const Point<dim> &position,
+                              const unsigned int compositional_field) const;
 
         /**
          * Declare the parameters this class takes through input files. The
@@ -169,6 +166,20 @@ namespace aspect
     template <int dim>
     void
     declare_parameters (ParameterHandler &prm);
+
+
+    /**
+     * For the current plugin subsystem, write a connection graph of all of the
+     * plugins we know about, in the format that the
+     * programs dot and neato understand. This allows for a visualization of
+     * how all of the plugins that ASPECT knows about are interconnected, and
+     * connect to other parts of the ASPECT code.
+     *
+     * @param output_stream The stream to write the output to.
+     */
+    template <int dim>
+    void
+    write_plugin_graph (std::ostream &output_stream);
 
 
     /**

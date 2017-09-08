@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011, 2012 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2016 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,34 +14,25 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
 
-#ifndef __aspect__simulator_access_h
-#define __aspect__simulator_access_h
+#ifndef _aspect_simulator_access_h
+#define _aspect_simulator_access_h
 
+#include <aspect/global.h>
+#include <aspect/parameters.h>
+#include <aspect/introspection.h>
+
+#include <deal.II/base/table_handler.h>
+#include <deal.II/base/timer.h>
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/distributed/tria.h>
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/fe/fe.h>
 #include <deal.II/fe/mapping_q.h>
-
-#include <aspect/global.h>
-#include <aspect/parameters.h>
-#include <aspect/introspection.h>
-#include <aspect/material_model/interface.h>
-#include <aspect/geometry_model/interface.h>
-#include <aspect/gravity_model/interface.h>
-#include <aspect/boundary_temperature/interface.h>
-#include <aspect/initial_conditions/interface.h>
-#include <aspect/compositional_initial_conditions/interface.h>
-#include <aspect/velocity_boundary_conditions/interface.h>
-#include <aspect/mesh_refinement/interface.h>
-#include <aspect/postprocess/interface.h>
-#include <aspect/heating_model/interface.h>
-#include <aspect/adiabatic_conditions/interface.h>
 
 
 
@@ -49,15 +40,68 @@ namespace aspect
 {
   using namespace dealii;
 
-  // forward declaration
+  // forward declarations:
   template <int dim> class Simulator;
+  template <int dim> struct SimulatorSignals;
+  template <int dim> class LateralAveraging;
+
+  namespace GravityModel
+  {
+    template <int dim> class Interface;
+  }
+
   namespace HeatingModel
   {
     template <int dim> class Manager;
   }
 
+  namespace InitialTemperature
+  {
+    template <int dim> class Manager;
+    template <int dim> class Interface;
+  }
+
+  namespace BoundaryTemperature
+  {
+    template <int dim> class Manager;
+    template <int dim> class Interface;
+  }
+
+  namespace BoundaryComposition
+  {
+    template <int dim> class Interface;
+  }
+
+  namespace BoundaryTraction
+  {
+    template <int dim> class Interface;
+  }
+
+  namespace BoundaryVelocity
+  {
+    template <int dim> class Interface;
+  }
+
+  namespace InitialComposition
+  {
+    template <int dim> class Manager;
+    template <int dim> class Interface;
+  }
+
+  namespace InitialTopographyModel
+  {
+    template <int dim> class Interface;
+  }
+
+  namespace AdiabaticConditions
+  {
+    template <int dim> class Interface;
+  }
+
+  template <int dim> class MeltHandler;
+
   /**
-   * SimulatorAccess is base class for different plugins like postprocessors.
+   * SimulatorAccess is a base class for different plugins like postprocessors.
    * It provides access to the various variables of the main class that
    * plugins may want to use in their evaluations, such as solution vectors,
    * the current time, time step sizes, material models, or the triangulations
@@ -111,7 +155,7 @@ namespace aspect
        *
        * @param simulator_object A reference to the main simulator object.
        */
-      virtual void initialize (const Simulator<dim> &simulator_object);
+      virtual void initialize_simulator (const Simulator<dim> &simulator_object);
 
       /** @name Accessing variables that identify overall properties of the simulator */
       /** @{ */
@@ -127,20 +171,42 @@ namespace aspect
       introspection () const;
 
       /**
-       * Returns a reference to the Simulator itself. Note that you can not
+       * Return a reference to the Simulator itself. Note that you can not
        * access any members or functions of the Simulator. This function
        * exists so that any class with SimulatorAccess can create other
        * objects with SimulatorAccess (because initializing them requires a
        * reference to the Simulator).
        */
       const Simulator<dim> &
-      get_simulator() const;
+      get_simulator () const;
+
+      /**
+       * Return a reference to the parameters object that describes all run-time
+       * parameters used in the current simulation.
+       */
+      const Parameters<dim> &
+      get_parameters () const;
+
+      /**
+       * Get Access to the structure containing the signals of the simulator.
+       */
+      SimulatorSignals<dim> &
+      get_signals() const;
 
       /**
        * Return the MPI communicator for this simulation.
        */
       MPI_Comm
       get_mpi_communicator () const;
+
+      /**
+       * Return the timer object for this simulation. Since the timer is
+       * mutable in the Simulator class, this allows plugins to define their
+       * own sections in the timer to measure the time spent in sections of
+       * their code.
+       */
+      TimerOutput &
+      get_computing_timer () const;
 
       /**
        * Return a reference to the stream object that only outputs something
@@ -156,16 +222,28 @@ namespace aspect
       double get_time () const;
 
       /**
-       * Return the size of the last time step.
+       * Return the size of the current time step.
        */
       double
       get_timestep () const;
+
+      /**
+       * Return the size of the last time step.
+       */
+      double
+      get_old_timestep () const;
 
       /**
        * Return the current number of a time step.
        */
       unsigned int
       get_timestep_number () const;
+
+      /**
+       * Return the current nonlinear iteration number of a time step.
+       */
+      unsigned int
+      get_nonlinear_iteration () const;
 
       /**
        * Return a reference to the triangulation in use by the simulator
@@ -208,11 +286,16 @@ namespace aspect
       include_latent_heat () const;
 
       /**
+       * Return whether we solve the equations for melt transport.
+       */
+      bool
+      include_melt_transport () const;
+
+      /**
        * Return the stokes velocity degree.
        */
       int
       get_stokes_velocity_degree () const;
-
 
       /**
        * Return the adiabatic surface temperature.
@@ -233,6 +316,18 @@ namespace aspect
        */
       bool
       convert_output_to_years () const;
+
+      /**
+       * Return the number of the current pre refinement step.
+       * This can be useful for plugins that want to function differently in
+       * the initial adaptive refinements and later on.
+       * This will be not initialized before Simulator<dim>::run() is called.
+       * It iterates upward from 0 to parameters.initial_adaptive_refinement
+       * during the initial adaptive refinement steps, and equals
+       * std::numeric_limits<unsigned int>::max() afterwards.
+       */
+      unsigned int
+      get_pre_refinement_step () const;
 
       /**
        * Return the number of compositional fields specified in the input
@@ -270,6 +365,19 @@ namespace aspect
       /** @name Accessing variables that identify the solution of the problem */
       /** @{ */
 
+      /**
+       * Return a reference to the vector that has the current linearization
+       * point of the entire system, i.e. the velocity and pressure variables
+       * as well as the temperature and compositional fields. This vector is
+       * associated with the DoFHandler object returned by get_dof_handler().
+       * This vector is only different from the one returned by get_solution()
+       * during the solver phase.
+       *
+       * @note In general the vector is a distributed vector; however, it
+       * contains ghost elements for all locally relevant degrees of freedom.
+       */
+      const LinearAlgebra::BlockVector &
+      get_current_linearization_point () const;
 
       /**
        * Return a reference to the vector that has the current solution of the
@@ -295,6 +403,27 @@ namespace aspect
       get_old_solution () const;
 
       /**
+       * Return a reference to the vector that has the solution of the entire
+       * system at the second-to-last time step. This vector is associated with the
+       * DoFHandler object returned by get_stokes_dof_handler().
+       *
+       * @note In general the vector is a distributed vector; however, it
+       * contains ghost elements for all locally relevant degrees of freedom.
+       */
+      const LinearAlgebra::BlockVector &
+      get_old_old_solution () const;
+
+      /**
+       * Return a reference to the vector that has the mesh velocity for
+       * simulations with a free surface.
+       *
+       * @note In general the vector is a distributed vector; however, it
+       * contains ghost elements for all locally relevant degrees of freedom.
+       */
+      const LinearAlgebra::BlockVector &
+      get_mesh_velocity () const;
+
+      /**
        * Return a reference to the DoFHandler that is used to discretize the
        * variables at the current time step.
        */
@@ -313,82 +442,17 @@ namespace aspect
       get_fe () const;
 
       /**
-       * Fill the argument with a set of depth averages of the current
-       * temperature field. The function fills a vector that contains average
-       * field values over slices of the domain of same depth.
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
+       * Return a reference to the system matrix at the current time step.
        */
-      void
-      get_depth_average_temperature(std::vector<double> &values) const;
+      const LinearAlgebra::BlockSparseMatrix &
+      get_system_matrix () const;
 
       /**
-       * Fill the argument with a set of depth averages of the current
-       * compositional fields. See get_depth_average_temperature.
-       *
-       * @param composition_index The index of the compositional field whose
-       * matrix we want to assemble (0 <= composition_index < number of
-       * compositional fields in this problem).
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
+       * Return a reference to the system preconditioner matrix at the current time step.
        */
-      void
-      get_depth_average_composition(const unsigned int composition_index,
-                                    std::vector<double> &values) const;
+      const LinearAlgebra::BlockSparseMatrix &
+      get_system_preconditioner_matrix () const;
 
-      /**
-       * Compute a depth average of the current viscosity
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void
-      get_depth_average_viscosity(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the current velocity magnitude
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void
-      get_depth_average_velocity_magnitude(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the current sinking velocity
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void
-      get_depth_average_sinking_velocity(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the seismic shear wave speed: Vs
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void
-      get_depth_average_Vs(std::vector<double> &values) const;
-
-      /**
-       * Compute a depth average of the seismic pressure wave speed: Vp
-       *
-       * @param values The output vector of depth averaged values. The
-       * function takes the pre-existing size of this vector as the number of
-       * depth slices.
-       */
-      void
-      get_depth_average_Vp(std::vector<double> &values) const;
       /** @} */
 
 
@@ -403,10 +467,34 @@ namespace aspect
       get_material_model () const;
 
       /**
+       * This function simply calls Simulator<dim>::compute_material_model_input_values()
+       * with the given arguments.
+       */
+      void
+      compute_material_model_input_values (const LinearAlgebra::BlockVector                            &input_solution,
+                                           const FEValuesBase<dim,dim>                                 &input_finite_element_values,
+                                           const typename DoFHandler<dim>::active_cell_iterator        &cell,
+                                           const bool                                                   compute_strainrate,
+                                           MaterialModel::MaterialModelInputs<dim> &material_model_inputs) const;
+
+      /**
+       * This function simply calls Simulator<dim>::create_additional_material_model_outputs()
+       * with the given arguments.
+       */
+      void
+      create_additional_material_model_outputs (MaterialModel::MaterialModelOutputs<dim> &) const;
+
+      /**
        * Return a pointer to the gravity model description.
        */
       const GravityModel::Interface<dim> &
       get_gravity_model () const;
+
+      /**
+       * Return a pointer to the initial topography model.
+       */
+      const InitialTopographyModel::Interface<dim> &
+      get_initial_topography_model () const;
 
       /**
        * Return a pointer to the geometry model.
@@ -433,26 +521,79 @@ namespace aspect
       bool has_boundary_temperature () const;
 
       /**
-       * Return a pointer to the object that describes the temperature
+       * Return a reference to the object that describes the temperature
        * boundary values.
+       *
+       * @deprecated: Use get_boundary_temperature_manager() instead.
        */
       const BoundaryTemperature::Interface<dim> &
-      get_boundary_temperature () const;
+      get_boundary_temperature () const DEAL_II_DEPRECATED;
+
+      /**
+       * Return an reference to the manager of the initial temperature models.
+       * This can then i.e. be used to get the names of the initial temperature
+       * models used in a computation, or to compute the initial temperature
+       * for a given position.
+       */
+      const BoundaryTemperature::Manager<dim> &
+      get_boundary_temperature_manager () const;
+
+      /**
+       * Return whether the current model has a boundary composition object
+       * set. This is useful because a simulation does not actually have to
+       * declare any boundary composition model, for example if all
+       * boundaries are reflecting. In such cases, there is no
+       * boundary composition model that can provide, for example,
+       * a minimal and maximal temperature on the boundary.
+       */
+      bool has_boundary_composition () const;
+
+      /**
+       * Return a reference to the object that describes the composition
+       * boundary values.
+       */
+      const BoundaryComposition::Interface<dim> &
+      get_boundary_composition () const;
+
+      /**
+       * Return a reference to the object that describes traction
+       * boundary conditions.
+       */
+      const std::map<types::boundary_id,std_cxx11::shared_ptr<BoundaryTraction::Interface<dim> > > &
+      get_boundary_traction () const;
 
       /**
        * Return a pointer to the object that describes the temperature initial
        * values.
+       *
+       * @deprecated Use <code> get_initial_temperature_manager </code> instead.
        */
-      const InitialConditions::Interface<dim> &
-      get_initial_conditions () const;
+      const InitialTemperature::Interface<dim> &
+      get_initial_temperature () const DEAL_II_DEPRECATED;
 
+      /**
+       * Return a reference to the manager of the initial temperature models.
+       * This can then i.e. be used to get the names of the initial temperature
+       * models used in a computation, or to compute the initial temperature
+       * for a given position.
+       */
+      const InitialTemperature::Manager<dim> &
+      get_initial_temperature_manager () const;
 
       /**
        * Return a pointer to the object that describes the composition initial
        * values.
        */
-      const CompositionalInitialConditions::Interface<dim> &
-      get_compositional_initial_conditions () const;
+      const InitialComposition::Interface<dim> &
+      get_initial_composition () const DEAL_II_DEPRECATED;
+
+      /**
+       * Return a pointer to the manager of the initial composition model.
+       * This can then i.e. be used to get the names of the initial composition
+       * models used in a computation.
+       */
+      const InitialComposition::Manager<dim> &
+      get_initial_composition_manager () const;
 
       /**
        * Return a set of boundary indicators that describes which of the
@@ -476,10 +617,10 @@ namespace aspect
       get_free_surface_boundary_indicators () const;
 
       /**
-       * Return the map of prescribed_velocity_boundary_conditions
+       * Return the map of prescribed_boundary_velocity
        */
-      const std::map<types::boundary_id,std_cxx11::shared_ptr<VelocityBoundaryConditions::Interface<dim> > >
-      get_prescribed_velocity_boundary_conditions () const;
+      const std::map<types::boundary_id,std_cxx11::shared_ptr<BoundaryVelocity::Interface<dim> > >
+      get_prescribed_boundary_velocity () const;
 
       /**
        * Return a pointer to the manager of the heating model.
@@ -488,6 +629,40 @@ namespace aspect
        */
       const HeatingModel::Manager<dim> &
       get_heating_model_manager () const;
+
+      /**
+       * Return a pointer to the melt handler.
+       */
+      const MeltHandler<dim> &
+      get_melt_handler () const;
+
+      /**
+       * Return a reference to the lateral averaging object owned
+       * by the simulator, which can be used to query lateral averages
+       * of various quantities at depth slices.
+       */
+      const LateralAveraging<dim> &
+      get_lateral_averaging () const;
+
+      /**
+       * Return a pointer to the object that describes the DoF
+       * constraints for the time step we are currently solving.
+       */
+      const ConstraintMatrix &
+      get_current_constraints() const;
+
+      /**
+       * Return whether or not the current object has been initialized by providing it with
+       * a pointer to a Simulator class object.
+       */
+      bool simulator_is_initialized () const;
+
+      /**
+       * Return the value used for rescaling the pressure in the linear
+       * solver.
+       */
+      double
+      get_pressure_scaling () const;
 
       /**
        * A convenience function that copies the values of the compositional

@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011 - 2015 by the authors of the ASPECT code.
+  Copyright (C) 2011 - 2017 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -14,13 +14,14 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with ASPECT; see the file doc/COPYING.  If not see
+  along with ASPECT; see the file LICENSE.  If not see
   <http://www.gnu.org/licenses/>.
 */
 
-#include <aspect/material_model/morency_doin.h>
 
-using namespace dealii;
+#include <aspect/material_model/morency_doin.h>
+#include <aspect/geometry_model/interface.h>
+
 
 namespace aspect
 {
@@ -34,25 +35,25 @@ namespace aspect
     {
       std::vector<double> volume_fractions( compositional_fields.size()+1);
 
-      //clip the compositional fields so they are between zero and one
+      // clip the compositional fields so they are between zero and one
       std::vector<double> x_comp = compositional_fields;
       for ( unsigned int i=0; i < x_comp.size(); ++i)
         x_comp[i] = std::min(std::max(x_comp[i], 0.0), 1.0);
 
-      //sum the compositional fields for normalization purposes
+      // sum the compositional fields for normalization purposes
       double sum_composition = 0.0;
       for ( unsigned int i=0; i < x_comp.size(); ++i)
         sum_composition += x_comp[i];
 
       if (sum_composition >= 1.0)
         {
-          volume_fractions[0] = 0.0;  //background mantle
+          volume_fractions[0] = 0.0;  // background mantle
           for ( unsigned int i=1; i <= x_comp.size(); ++i)
             volume_fractions[i] = x_comp[i-1]/sum_composition;
         }
       else
         {
-          volume_fractions[0] = 1.0 - sum_composition; //background mantle
+          volume_fractions[0] = 1.0 - sum_composition; // background mantle
           for ( unsigned int i=1; i <= x_comp.size(); ++i)
             volume_fractions[i] = x_comp[i-1];
         }
@@ -92,7 +93,7 @@ namespace aspect
             for (unsigned int j=0; j < volume_fractions.size(); ++j)
               np += volume_fractions[j] * nps[j];
 
-            const double tauy = tau_0 + gamma*reference_density()*g*depth;
+            const double tauy = tau_0 + gamma*densities[0]*g*depth;
 
             /**
              * Note: The actual second invariant of strain rate is defined as $e_{00}e_{11} - e_{01}^2$,
@@ -108,7 +109,7 @@ namespace aspect
             double one_over_veffv = 0.0;
             if (temperature != 0.0)
               one_over_veffv = 1.0 / (B * std::pow(edot/ref_strain_rate, -1.0+1.0/nv))
-                               * std::exp(-(activation_energy+activation_volume*reference_density()*g*depth)/(nv*R*temperature));
+                               * std::exp(-(activation_energy+activation_volume*densities[0]*g*depth)/(nv*R*temperature));
             const double one_over_veffp = 1.0 / (tauy * (std::pow(edot, -1.0+1.0/np) / std::pow(ref_strain_rate, 1.0/np)));
             // Effective viscosity = harmonic mean of diffusion and dislocation creep.
             // = (1/(v_eff^v) + 1/(v_eff^p))^-1
@@ -122,8 +123,8 @@ namespace aspect
             double density = 0.0;
             for (unsigned int j=0; j < volume_fractions.size(); ++j)
               {
-                //not strictly correct if thermal expansivities are different, since we are interpreting
-                //these compositions as volume fractions, but the error introduced should not be too bad.
+                // not strictly correct if thermal expansivities are different, since we are interpreting
+                // these compositions as volume fractions, but the error introduced should not be too bad.
                 const double temperature_factor = (1.0 - thermal_expansivities[j] * (temperature - reference_T));
                 density += volume_fractions[j] * densities[j] * temperature_factor;
               }
@@ -161,77 +162,6 @@ namespace aspect
     reference_viscosity () const
     {
       return ref_visc;
-    }
-
-    template <int dim>
-    double
-    MorencyDoin<dim>::
-    reference_density () const
-    {
-      return densities[0];
-    }
-
-    template <int dim>
-    bool
-    MorencyDoin<dim>::
-    viscosity_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      // compare this with the implementation of the viscosity() function
-      // to see the dependencies
-      if (((dependence & NonlinearDependence::temperature) != NonlinearDependence::none))
-        return true;
-      else if ((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none)
-        return true;
-      else if (((dependence & NonlinearDependence::pressure) != NonlinearDependence::none))
-        return true;
-      else if (((dependence & NonlinearDependence::strain_rate) != NonlinearDependence::none))
-        return true;
-      else
-        return false;
-    }
-
-    template <int dim>
-    bool
-    MorencyDoin<dim>::
-    density_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      // compare this with the implementation of the density() function
-      // to see the dependencies
-      if ((dependence & NonlinearDependence::temperature) != NonlinearDependence::none)
-        return true;
-      else if ((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none)
-        return true;
-      else if (((dependence & NonlinearDependence::pressure) != NonlinearDependence::none))
-        return true;
-      else
-        return false;
-    }
-
-    template <int dim>
-    bool
-    MorencyDoin<dim>::
-    compressibility_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    MorencyDoin<dim>::
-    specific_heat_depends_on (const NonlinearDependence::Dependence) const
-    {
-      return false;
-    }
-
-    template <int dim>
-    bool
-    MorencyDoin<dim>::
-    thermal_conductivity_depends_on (const NonlinearDependence::Dependence dependence) const
-    {
-      if ((dependence & NonlinearDependence::compositional_fields) != NonlinearDependence::none)
-        return true;
-      else
-        return false;
     }
 
     template <int dim>
@@ -276,7 +206,7 @@ namespace aspect
                              "for a total of N+1 values, where N is the number of compositional fields."
                              "If only one values is given, then all use the same value.  Units: None");
           prm.declare_entry ("Thermal diffusivity", "0.8e-6", Patterns::Double(0), "Units: $m^2/s$");
-          prm.declare_entry ("Heat capacity", "1.25e3", Patterns::Double(0), "Units: $J / (K * kg)$");
+          prm.declare_entry ("Heat capacity", "1.25e3", Patterns::Double(0), "Units: $J/kg/K$");
           prm.declare_entry ("Activation volume", "6.4e-6", Patterns::Double(0), "($V_a$). Units: $m^3 / mol$");
           prm.declare_entry ("Reference strain rate", "6.4e-16", Patterns::Double(0), "($\\dot{\\epsilon}_{ref}$). Units: $1 / s$");
           prm.declare_entry ("Preexponential constant for viscous rheology law", "1.24e14", Patterns::Double(0), "($B$). Units: None");
@@ -298,7 +228,7 @@ namespace aspect
     void
     MorencyDoin<dim>::parse_parameters (ParameterHandler &prm)
     {
-      //increment by one for background:
+      // increment by one for background:
       const unsigned int n_fields = this->n_compositional_fields() + 1;
 
       prm.enter_subsection("Material model");
@@ -365,39 +295,53 @@ namespace aspect
         prm.leave_subsection();
       }
       prm.leave_subsection();
-    }
 
+      // Declare dependencies on solution variables
+      this->model_dependence.viscosity = NonlinearDependence::temperature | NonlinearDependence::strain_rate | NonlinearDependence::compositional_fields;
+      this->model_dependence.density = NonlinearDependence::temperature | NonlinearDependence::compositional_fields;
+      this->model_dependence.compressibility = NonlinearDependence::none;
+      this->model_dependence.specific_heat = NonlinearDependence::none;
+      this->model_dependence.thermal_conductivity = NonlinearDependence::temperature | NonlinearDependence::compositional_fields;
+    }
+  }
+}
+
+// explicit instantiations
+namespace aspect
+{
+  namespace MaterialModel
+  {
     ASPECT_REGISTER_MATERIAL_MODEL(MorencyDoin,
                                    "Morency and Doin",
-                                   "An implementation of the visco-plastic rheology described by (Morency"
-                                   " and Doin, 2004). Compositional fields can each be assigned individual"
-                                   " activation energies, reference densities, thermal expansivities, and"
-                                   " stress exponents. The effective viscosity is defined as"
-                                   " \\[v_{eff} = \\left(\\frac{1}{v_{eff}^v}+\\frac{1}{v_{eff}^p}\\right)^{-1}\\]"
-                                   " where"
-                                   " \\[v_{eff}^v = B \\left(\\frac{\\dot{\\epsilon}}{\\dot{\\epsilon}_{ref}}"
-                                   " \\right)^{-1+1/n_v} exp\\left(\\frac{E_a +V_a \\rho_m g z}{n_v R T}\\right) \\]"
-                                   " \\[v_{eff}^p = (\\tau_0 + \\gamma \\rho_m g z) \\left( \\frac{\\dot{\\epsilon}^{-1+1/n_p}}"
-                                   " {\\dot{\\epsilon}_{ref}^{1/n_p}} \\right) \\]"
-                                   " where $B$ is a scaling constant; $\\dot{\\epsilon}$ is defined as"
-                                   " the quadratic sum of the second invariant of the strain rate tensor and"
-                                   " a minimum strain rate, $\\dot{\\epsilon}_0$; $\\dot{\\epsilon}_{ref}$"
-                                   " is a reference strain rate; $n_v$, and $n_p$ are stress exponents; $E_a$"
-                                   " is the activation energy; $V_a$ is the activation volume; $\\rho_m$ is the"
-                                   " mantle density; $R$ is the gas constant; $T$ is temperature; $\\tau_0$ is"
-                                   " the cohestive strength of rocks at the surface; $\\gamma$ is a coefficient"
-                                   " of yield stress increase with depth; and $z$ is depth."
-                                   " \n\n"
-                                   " Note: (Morency and Doin, 2004) defines the second invariant of the strain"
-                                   " rate in a nonstandard way. The formulation in the paper is given as"
-                                   " $\\epsilon_{II} = \\sqrt{\\frac{1}{2} (\\epsilon_{11}^2 +"
-                                   " \\epsilon_{12}^2)}$ where $\\epsilon$ is the strain rate tensor."
-                                   " For consistency, that is also the formulation implemented in this material model."
-                                   " \n\n"
-                                   " Morency, C., and M‐P. Doin. \"Numerical simulations of the mantle lithosphere delamination.\""
-                                   " Journal of Geophysical Research: Solid Earth (1978–2012) 109.B3 (2004)."
-                                   " \n\n"
-                                   " The value for the components of this formula and additional parameters are"
-                                   " read from the parameter file in subsection 'Material model/Morency and Doin'.")
+                                   "An implementation of the visco-plastic rheology described by (Morency "
+                                   "and Doin, 2004). Compositional fields can each be assigned individual "
+                                   "activation energies, reference densities, thermal expansivities, and "
+                                   "stress exponents. The effective viscosity is defined as "
+                                   "\\[v_{eff} = \\left(\\frac{1}{v_{eff}^v}+\\frac{1}{v_{eff}^p}\\right)^{-1}\\] "
+                                   "where "
+                                   "\\[v_{eff}^v = B \\left(\\frac{\\dot{\\epsilon}}{\\dot{\\epsilon}_{ref}} "
+                                   "\\right)^{-1+1/n_v} exp\\left(\\frac{E_a +V_a \\rho_m g z}{n_v R T}\\right) \\] "
+                                   "\\[v_{eff}^p = (\\tau_0 + \\gamma \\rho_m g z) \\left( \\frac{\\dot{\\epsilon}^{-1+1/n_p}} "
+                                   "{\\dot{\\epsilon}_{ref}^{1/n_p}} \\right) \\] "
+                                   "where $B$ is a scaling constant; $\\dot{\\epsilon}$ is defined as "
+                                   "the quadratic sum of the second invariant of the strain rate tensor and "
+                                   "a minimum strain rate, $\\dot{\\epsilon}_0$; $\\dot{\\epsilon}_{ref}$ "
+                                   "is a reference strain rate; $n_v$, and $n_p$ are stress exponents; $E_a$ "
+                                   "is the activation energy; $V_a$ is the activation volume; $\\rho_m$ is the "
+                                   "mantle density; $R$ is the gas constant; $T$ is temperature; $\\tau_0$ is "
+                                   "the cohesive strength of rocks at the surface; $\\gamma$ is a coefficient "
+                                   "of yield stress increase with depth; and $z$ is depth. "
+                                   "\n\n"
+                                   "Note: (Morency and Doin, 2004) defines the second invariant of the strain "
+                                   "rate in a nonstandard way. The formulation in the paper is given as "
+                                   "$\\epsilon_{II} = \\sqrt{\\frac{1}{2} (\\epsilon_{11}^2 +"
+                                   "\\epsilon_{12}^2)}$ where $\\epsilon$ is the strain rate tensor. "
+                                   "For consistency, that is also the formulation implemented in this material model."
+                                   "\n\n"
+                                   "Morency, C., and M‐P. Doin. \"Numerical simulations of the mantle lithosphere delamination.\" "
+                                   "Journal of Geophysical Research: Solid Earth (1978–2012) 109.B3 (2004)."
+                                   "\n\n"
+                                   "The value for the components of this formula and additional parameters are "
+                                   "read from the parameter file in subsection 'Material model/Morency and Doin'.")
   }
 }
